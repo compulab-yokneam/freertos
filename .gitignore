@@ -1,0 +1,6 @@
+*.bin
+*.elf
+*.obj
+*.swp
+cscope*
+output.map
