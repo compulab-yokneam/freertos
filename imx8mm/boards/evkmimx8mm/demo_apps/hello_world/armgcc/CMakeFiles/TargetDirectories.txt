@@ -1,3 +1,0 @@
-/home/val/Devel/Work/imx8mm/rtos/freertos/boards/evkmimx8mm/demo_apps/hello_world/armgcc/CMakeFiles/rebuild_cache.dir
-/home/val/Devel/Work/imx8mm/rtos/freertos/boards/evkmimx8mm/demo_apps/hello_world/armgcc/CMakeFiles/edit_cache.dir
-/home/val/Devel/Work/imx8mm/rtos/freertos/boards/evkmimx8mm/demo_apps/hello_world/armgcc/CMakeFiles/hello_world.elf.dir

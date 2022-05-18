@@ -7,8 +7,8 @@ debugging and further development.
 
 Toolchain supported
 ===================
-- IAR embedded Workbench  8.32.3
-- GCC ARM Embedded  8.2.1
+- IAR embedded Workbench  9.10.2
+- GCC ARM Embedded  10.2.1
 
 Hardware requirements
 =====================
@@ -52,6 +52,3 @@ SDMA scatter_gather transfer example finish.
 Destination Buffer:
 0       1       2       3       4       5       6       7       8       9       10       11       12       13       14       15
 ~~~~~~~~~~~~~~~~~~~~~
-Customization options
-=====================
-

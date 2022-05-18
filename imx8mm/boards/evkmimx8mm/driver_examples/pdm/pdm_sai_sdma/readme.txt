@@ -6,8 +6,8 @@ In this example, pdm gather audio data, and sai send it to codec.
 
 Toolchain supported
 ===================
-- IAR embedded Workbench  8.32.3
-- GCC ARM Embedded  8.2.1
+- IAR embedded Workbench  9.10.2
+- GCC ARM Embedded  10.2.1
 
 Hardware requirements
 =====================
@@ -56,7 +56,4 @@ PDM sai sdma example started!
 ~~~~~~~~~~~~~~~~~~~
 
 
-
-Customization options
-=====================
 

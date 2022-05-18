@@ -14,8 +14,8 @@ consumer and producer must be prepared to enable transaction.
 
 Toolchain supported
 ===================
-- IAR embedded Workbench  8.32.3
-- GCC ARM Embedded  8.2.1
+- IAR embedded Workbench  9.10.2
+- GCC ARM Embedded  10.2.1
 
 Hardware requirements
 =====================
@@ -63,6 +63,3 @@ Producer released item.
 Consumer 1 accepted item.
 Producer released item.
 Consumer 2 accepted item.
-Customization options
-=====================
-

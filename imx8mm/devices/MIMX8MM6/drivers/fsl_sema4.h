@@ -1,5 +1,5 @@
 /*
- * Copyright 2017 NXP
+ * Copyright 2017-2020 NXP
  * All rights reserved.
  *
  * SPDX-License-Identifier: BSD-3-Clause
@@ -22,16 +22,31 @@
 /*! @name Driver version */
 /*@{*/
 /*! @brief SEMA4 driver version */
-#define FSL_SEMA4_DRIVER_VERSION (MAKE_VERSION(2, 0, 0))
+#define FSL_SEMA4_DRIVER_VERSION (MAKE_VERSION(2, 0, 2))
 /*@}*/
 
 /*! @brief The number to reset all SEMA4 gates. */
 #define SEMA4_GATE_NUM_RESET_ALL (64U)
 
+#if defined(SEMA4_GATE_COUNT)
+
 /*!
  * @brief SEMA4 gate n register address.
  */
-#define SEMA4_GATEn(base, n) (*(&((base)->Gate00) + (n)))
+#define SEMA4_GATEn(base, n) ((base)->GATE[(n)])
+
+#ifndef FSL_FEATURE_SEMA4_GATE_COUNT
+#define FSL_FEATURE_SEMA4_GATE_COUNT SEMA4_GATE_COUNT
+#endif
+
+#else
+
+/*!
+ * @brief SEMA4 gate n register address.
+ */
+#define SEMA4_GATEn(base, n) (((volatile uint8_t *)(&((base)->Gate00)))[(n)])
+
+#endif
 
 /*******************************************************************************
  * API
@@ -103,7 +118,7 @@ void SEMA4_Lock(SEMA4_Type *base, uint8_t gateNum, uint8_t procNum);
  */
 static inline void SEMA4_Unlock(SEMA4_Type *base, uint8_t gateNum)
 {
-    assert(gateNum < FSL_FEATURE_SEMA4_GATE_COUNT);
+    assert(gateNum < (uint8_t)FSL_FEATURE_SEMA4_GATE_COUNT);
 
     SEMA4_GATEn(base, gateNum) = 0U;
 }
@@ -121,9 +136,9 @@ static inline void SEMA4_Unlock(SEMA4_Type *base, uint8_t gateNum)
  */
 static inline int32_t SEMA4_GetLockProc(SEMA4_Type *base, uint8_t gateNum)
 {
-    assert(gateNum < FSL_FEATURE_SEMA4_GATE_COUNT);
+    assert(gateNum < (uint8_t)FSL_FEATURE_SEMA4_GATE_COUNT);
 
-    return (SEMA4_GATEn(base, gateNum)) - 1;
+    return (int32_t)(SEMA4_GATEn(base, gateNum)) - 1;
 }
 
 /*!
@@ -168,7 +183,7 @@ static inline status_t SEMA4_ResetAllGates(SEMA4_Type *base)
 static inline void SEMA4_EnableGateNotifyInterrupt(SEMA4_Type *base, uint8_t procNum, uint32_t mask)
 {
     mask = __REV(__RBIT(mask));
-    base->CPINE[procNum].CPINE |= mask;
+    base->CPINE[procNum].CPINE |= (uint16_t)mask;
 }
 
 /*!
@@ -185,7 +200,7 @@ static inline void SEMA4_EnableGateNotifyInterrupt(SEMA4_Type *base, uint8_t pro
 static inline void SEMA4_DisableGateNotifyInterrupt(SEMA4_Type *base, uint8_t procNum, uint32_t mask)
 {
     mask = __REV(__RBIT(mask));
-    base->CPINE[procNum].CPINE &= ~mask;
+    base->CPINE[procNum].CPINE &= (uint16_t)(~mask);
 }
 
 /*!

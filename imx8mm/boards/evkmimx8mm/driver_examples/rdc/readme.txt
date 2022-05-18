@@ -6,8 +6,8 @@ asscess policy using RDC and RDC_SEMA42
 
 Toolchain supported
 ===================
-- IAR embedded Workbench  8.32.3
-- GCC ARM Embedded  8.2.1
+- IAR embedded Workbench  9.10.2
+- GCC ARM Embedded  10.2.1
 
 Hardware requirements
 =====================
@@ -45,6 +45,3 @@ RDC memory region access control
 
 RDC Example Success
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-Customization options
-=====================
-

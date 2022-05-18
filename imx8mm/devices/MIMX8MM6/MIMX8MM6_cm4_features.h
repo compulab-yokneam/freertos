@@ -1,13 +1,13 @@
 /*
 ** ###################################################################
 **     Version:             rev. 4.0, 2019-02-18
-**     Build:               b190306
+**     Build:               b210825
 **
 **     Abstract:
 **         Chip specific module features.
 **
 **     Copyright 2016 Freescale Semiconductor, Inc.
-**     Copyright 2016-2019 NXP
+**     Copyright 2016-2021 NXP
 **     All rights reserved.
 **
 **     SPDX-License-Identifier: BSD-3-Clause
@@ -112,6 +112,11 @@
 /* @brief XTALOSC availability on the SoC. */
 #define FSL_FEATURE_SOC_XTALOSC_COUNT (1)
 
+/* CCM module features */
+
+/* @brief Is affected by errata with ID 50235 (Incorrect clock setting for CAN affects by LPUART clock gate). */
+#define FSL_FEATURE_CCM_HAS_ERRATA_50235 (0)
+
 /* ECSPI module features */
 
 /* @brief ECSPI Tx FIFO Size. */
@@ -120,7 +125,7 @@
 /* ENET module features */
 
 /* @brief Support Interrupt Coalesce */
-#define FSL_FEATURE_ENET_HAS_INTERRUPT_COALESCE (0)
+#define FSL_FEATURE_ENET_HAS_INTERRUPT_COALESCE (1)
 /* @brief Queue Size. */
 #define FSL_FEATURE_ENET_QUEUE (3)
 /* @brief Has AVB Support. */
@@ -131,6 +136,31 @@
 #define FSL_FEATURE_ENET_HAS_EXTEND_MDIO (1)
 /* @brief Has Additional 1588 Timer Channel Interrupt. */
 #define FSL_FEATURE_ENET_HAS_ADD_1588_TIMER_CHN_INT (1)
+/* @brief Support Interrupt Coalesce for each instance */
+#define FSL_FEATURE_ENET_INSTANCE_HAS_INTERRUPT_COALESCEn(x) (1)
+/* @brief Queue Size for each instance. */
+#define FSL_FEATURE_ENET_INSTANCE_QUEUEn(x) (3)
+/* @brief Has AVB Support for each instance. */
+#define FSL_FEATURE_ENET_INSTANCE_HAS_AVBn(x) (1)
+/* @brief Has Timer Pulse Width control for each instance. */
+#define FSL_FEATURE_ENET_INSTANCE_HAS_TIMER_PWCONTROLn(x) (0)
+/* @brief Has Extend MDIO Support for each instance. */
+#define FSL_FEATURE_ENET_INSTANCE_HAS_EXTEND_MDIOn(x) (1)
+/* @brief Has Additional 1588 Timer Channel Interrupt for each instance. */
+#define FSL_FEATURE_ENET_INSTANCE_HAS_ADD_1588_TIMER_CHN_INTn(x) (1)
+/* @brief Has threshold for the number of frames in the receive FIFO (register bit field RSEM[STAT_SECTION_EMPTY]). */
+#define FSL_FEATURE_ENET_HAS_RECEIVE_STATUS_THRESHOLD (1)
+/* @brief Has trasfer clock delay (register bit field ECR[TXC_DLY]). */
+#define FSL_FEATURE_ENET_HAS_RGMII_TXC_DELAY (0)
+/* @brief Has receive clock delay (register bit field ECR[RXC_DLY]). */
+#define FSL_FEATURE_ENET_HAS_RGMII_RXC_DELAY (0)
+/* @brief PTP Timestamp CAPTURE bit always returns 0 when the capture is not over. */
+#define FSL_FEATURE_ENET_TIMESTAMP_CAPTURE_BIT_INVALID (0)
+
+/* GPC module features */
+
+/* @brief Has PGC MF. */
+#define FSL_FEATURE_GPC_HAS_PGC_MF (1)
 
 /* IGPIO module features */
 
@@ -171,12 +201,12 @@
 #define FSL_FEATURE_SAI_HAS_MDR (0)
 /* @brief Has support the BCLK bypass mode when BCLK = MCLK. */
 #define FSL_FEATURE_SAI_HAS_BCLK_BYPASS (1)
-/* @brief SAI5 AND SAI6 SHARE ONE IRQNUMBER. */
-#define FSL_FEATURE_SAI_SAI5_SAI6_SHARE_IRQ  (1)
 /* @brief Has DIV bit fields of MCR register (register bit fields MCR[DIV]. */
 #define FSL_FEATURE_SAI_HAS_MCR_MCLK_POST_DIV (1)
 /* @brief Support Channel Mode (register bit fields TCR4[CHMOD]). */
 #define FSL_FEATURE_SAI_HAS_CHANNEL_MODE (1)
+/* @brief SAI5 AND SAI6 SHARE ONE IRQNUMBER. */
+#define FSL_FEATURE_SAI_SAI5_SAI6_SHARE_IRQ  (1)
 
 /* LMEM module features */
 
@@ -208,20 +238,26 @@
 #define FSL_FEATURE_MU_HAS_RESET_INT (0)
 /* @brief MU Has register SR[MURIP] */
 #define FSL_FEATURE_MU_HAS_SR_MURIP (0)
-/* @brief brief MU Has register SR[HRIP] */
+/* @brief MU Has register SR[HRIP] */
 #define FSL_FEATURE_MU_HAS_SR_HRIP (0)
-/* @brief brief MU does not support enable clock of the other core, CR[CLKE] or CCR[CLKE]. */
+/* @brief MU does not support enable clock of the other core, CR[CLKE] or CCR[CLKE]. */
 #define FSL_FEATURE_MU_NO_CLKE (1)
-/* @brief brief MU does not support NMI, CR[NMI]. */
+/* @brief MU does not support NMI, CR[NMI]. */
 #define FSL_FEATURE_MU_NO_NMI (1)
-/* @brief brief MU does not support hold the other core reset. CR[RSTH] or CCR[RSTH]. */
+/* @brief MU does not support hold the other core reset. CR[RSTH] or CCR[RSTH]. */
 #define FSL_FEATURE_MU_NO_RSTH (1)
-/* @brief brief MU does not supports MU reset, CR[MUR]. */
+/* @brief MU does not supports MU reset, CR[MUR]. */
 #define FSL_FEATURE_MU_NO_MUR (1)
-/* @brief brief MU does not supports hardware reset, CR[HR] or CCR[HR]. */
+/* @brief MU does not supports hardware reset, CR[HR] or CCR[HR]. */
 #define FSL_FEATURE_MU_NO_HR (1)
-/* @brief brief MU supports mask the hardware reset. CR[HRM] or CCR[HRM]. */
+/* @brief MU supports mask the hardware reset. CR[HRM] or CCR[HRM]. */
 #define FSL_FEATURE_MU_HAS_HRM (1)
+/* @brief MU does not support check the other core power mode. SR[PM] or BSR[APM]. */
+#define FSL_FEATURE_MU_NO_PM (0)
+/* @brief MU supports reset assert interrupt. CR[RAIE] or BCR[RAIE]. */
+#define FSL_FEATURE_MU_HAS_RESET_ASSERT_INT (0)
+/* @brief MU supports reset de-assert interrupt. CR[RDIE] or BCR[RDIE]. */
+#define FSL_FEATURE_MU_HAS_RESET_DEASSERT_INT (0)
 
 /* interrupt module features */
 
@@ -240,6 +276,10 @@
 #define FSL_FEATURE_PDM_FIFO_WIDTH (2)
 /* @brief PDM FIFO DEPTH Size */
 #define FSL_FEATURE_PDM_FIFO_DEPTH (8)
+/* @brief PDM has RANGE_CTRL register */
+#define FSL_FEATURE_PDM_HAS_RANGE_CTRL (0)
+/* @brief PDM Has Low Frequency */
+#define FSL_FEATURE_PDM_HAS_STATUS_LOW_FREQ (1)
 
 /* SDMA module features */
 
@@ -279,12 +319,12 @@
 
 /* @brief SPBA module start address. */
 #define FSL_FEATURE_SPBA_STARTn(x) \
-    (((x) == SPBA1) ? (0x30800000U) : \
-    (((x) == SPBA2) ? (0x30000000U) : (-1)))
+    (((x) == SPBA2) ? (0x30000000) : \
+    (((x) == SPBA1) ? (0x30800000) : (-1)))
 /* @brief SPBA module end address. */
 #define FSL_FEATURE_SPBA_ENDn(x) \
-    (((x) == SPBA1) ? (0x308FFFFFU) : \
-    (((x) == SPBA2) ? (0x300FFFFFU) : (-1)))
+    (((x) == SPBA2) ? (0x300FFFFF) : \
+    (((x) == SPBA1) ? (0x308FFFFF) : (-1)))
 
 /* SysTick module features */
 
@@ -310,6 +350,18 @@
 #define FSL_FEATURE_USDHC_HAS_SDR50_MODE (1)
 /* @brief Has SDR104 support (HOST_CTRL_CAP[SDR104_SUPPORT]) */
 #define FSL_FEATURE_USDHC_HAS_SDR104_MODE (1)
+/* @brief USDHC has reset control */
+#define FSL_FEATURE_USDHC_HAS_RESET (0)
+/* @brief USDHC has no bitfield WTMK_LVL[WR_BRST_LEN] and WTMK_LVL[RD_BRST_LEN] */
+#define FSL_FEATURE_USDHC_HAS_NO_RW_BURST_LEN (0)
+/* @brief If USDHC instance support 8 bit width */
+#define FSL_FEATURE_USDHC_INSTANCE_SUPPORT_8_BIT_WIDTHn(x) (1)
+/* @brief If USDHC instance support HS400 mode */
+#define FSL_FEATURE_USDHC_INSTANCE_SUPPORT_HS400_MODEn(x) (0)
+/* @brief If USDHC instance support 1v8 signal */
+#define FSL_FEATURE_USDHC_INSTANCE_SUPPORT_1V8_SIGNALn(x) (1)
+/* @brief Has no retuning time counter (HOST_CTRL_CAP[TIME_COUNT_RETURNING]) */
+#define FSL_FEATURE_USDHC_REGISTER_HOST_CTRL_CAP_HAS_NO_RETUNING_TIME_COUNTER (0)
 
 #endif /* _MIMX8MM6_cm4_FEATURES_H_ */
 

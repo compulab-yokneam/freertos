@@ -1,5 +1,5 @@
 /*
- * Copyright 2018, NXP
+ * Copyright 2018-2021, NXP
  * All rights reserved.
  *
  *
@@ -15,15 +15,23 @@
 #endif
 #include "fsl_sai.h"
 #include "fsl_sai_sdma.h"
-#include "fsl_codec_common.h"
 #include "srtm_dispatcher.h"
 #include "srtm_message.h"
+#include "srtm_message_struct.h"
 #include "srtm_service_struct.h"
-#include "fsl_iomuxc.h"
-#include "sdma_multi_fifo_script.h"
+#include "fsl_sdma_script.h"
 /*******************************************************************************
  * Definitions
  ******************************************************************************/
+#define SRTM_SDMA_MAX_TRANSFER_SIZE UINT16_MAX
+
+typedef enum _srtm_sai_sdma_suspend_state
+{
+    SRTM_NotSuspended,
+    SRTM_Suspended,
+    SRTM_WakingUp,
+} srtm_sai_sdma_suspend_state;
+
 typedef struct _srtm_sai_sdma_buf_runtime
 {
     uint32_t leadIdx;          /* ready period index for playback or recording. */
@@ -61,13 +69,23 @@ typedef struct _srtm_sai_sdma_runtime
     uint32_t bufSize;
     uint32_t periodSize;
     uint32_t periods;
-    uint32_t readyIdx;                        /* period ready index. */
-    srtm_procedure_t proc;                    /* proc message to trigger DMA transfer in SRTM context. */
+    uint32_t readyIdx; /* period ready index. */
+    uint32_t
+        maxXferSize; /* The maximum bytes can be transfered by each DMA transmission with given channels and format. */
+    uint32_t countsPerPeriod; /* The DMA transfer count for each period. If the periodSize is larger than maxXferSize,
+                                 the period will be splited into multiple transmissions. */
+    uint32_t curXferIdx;      /* The current transmission index in countsPerPeriod. */
+    srtm_procedure_t proc;    /* proc message to trigger DMA transfer in SRTM context. */
     struct _srtm_sai_sdma_buf_runtime bufRtm; /* buffer provided by audio client. */
     srtm_sai_sdma_local_buf_t localBuf;
     struct _srtm_sai_sdma_local_runtime localRtm; /* buffer set by application. */
-    bool freeRun;               /* flag to indicate that no periodReady will be sent by audio client. */
-    uint32_t finishedBufOffset; /* offset from bufAddr where the data transfer has completed. */
+    bool freeRun; /* flag to indicate that no periodReady will be sent by audio client. */
+    bool stoppedOnSuspend;
+    bool paramSet;
+    uint32_t finishedBufOffset;                 /* offset from bufAddr where the data transfer has completed. */
+    srtm_sai_sdma_suspend_state suspendState;   /* service state in client suspend. */
+    srtm_sai_sdma_data_callback_t dataCallback; /* Callback function to provide data */
+    void *dataCallbackParam;                    /* Callback function argument to be passed back to application */
 } * srtm_sai_sdma_runtime_t;
 
 /* SAI SDMA adapter */
@@ -85,6 +103,7 @@ typedef struct _srtm_sai_sdma_adapter
     struct _srtm_sai_sdma_runtime rxRtm;
     struct _srtm_sai_sdma_runtime txRtm;
 } * srtm_sai_sdma_adapter_t;
+
 /*******************************************************************************
  * Prototypes
  ******************************************************************************/
@@ -97,6 +116,8 @@ static const sai_mono_stereo_t saiChannelMap[] = {kSAI_MonoLeft, kSAI_MonoRight,
 #ifdef SRTM_DEBUG_MESSAGE_FUNC
 static const char *saiDirection[] = {"Rx", "Tx"};
 #endif
+static short g_sdma_multi_fifo_script[] = FSL_SDMA_MULTI_FIFO_SCRIPT;
+
 /*******************************************************************************
  * Code
  ******************************************************************************/
@@ -104,7 +125,7 @@ void SRTM_SaiSdmaAdapter_GetAudioServiceState(srtm_sai_adapter_t adapter,
                                               srtm_audio_state_t *pTxState,
                                               srtm_audio_state_t *pRxState)
 {
-    srtm_sai_sdma_adapter_t handle = (srtm_sai_sdma_adapter_t)adapter;
+    srtm_sai_sdma_adapter_t handle = (srtm_sai_sdma_adapter_t)(void *)adapter;
 
     *pTxState = handle->txRtm.state;
     *pRxState = handle->rxRtm.state;
@@ -112,49 +133,12 @@ void SRTM_SaiSdmaAdapter_GetAudioServiceState(srtm_sai_adapter_t adapter,
 
 static void SRTM_SaidmaAdapter_LocalBufferUpdate(uint32_t *dest, uint32_t *src, uint32_t count)
 {
-    while (count--)
+    while (count != 0U)
     {
         *dest = *src;
         dest++;
         src++;
-    }
-}
-
-static void SRTM_SaiSdmaApater_AduioPllGateEnable(bool isEnable)
-{
-    if (isEnable)
-    {
-        /* Judge if the Audio PLL1/PLL2  are ON, if not, enable them. */
-        if ((CCM_ANALOG->AUDIO_PLL1_GEN_CTRL & CCM_ANALOG_AUDIO_PLL1_GEN_CTRL_PLL_CLKE_MASK) == 0U)
-        {
-            *&(CCM_ANALOG->AUDIO_PLL1_GEN_CTRL) =
-                CCM_ANALOG_AUDIO_PLL1_GEN_CTRL_PLL_RST_MASK | CCM_ANALOG_AUDIO_PLL1_GEN_CTRL_PLL_CLKE_MASK;
-            while (!(CCM_ANALOG->AUDIO_PLL1_GEN_CTRL & CCM_ANALOG_AUDIO_PLL1_GEN_CTRL_PLL_LOCK_MASK))
-            {
-            }
-        }
-
-        if ((CCM_ANALOG->AUDIO_PLL2_GEN_CTRL & CCM_ANALOG_AUDIO_PLL2_GEN_CTRL_PLL_CLKE_MASK) == 0U)
-        {
-            *&(CCM_ANALOG->AUDIO_PLL2_GEN_CTRL) =
-                CCM_ANALOG_AUDIO_PLL2_GEN_CTRL_PLL_RST_MASK | CCM_ANALOG_AUDIO_PLL2_GEN_CTRL_PLL_CLKE_MASK;
-            while (!(CCM_ANALOG->AUDIO_PLL2_GEN_CTRL & CCM_ANALOG_AUDIO_PLL2_GEN_CTRL_PLL_LOCK_MASK))
-            {
-            }
-        }
-    }
-    else
-    {
-        /* Judge if the Audio PLL1/PLL2  are OFF, if not, disable them. */
-        if (CCM_ANALOG->AUDIO_PLL1_GEN_CTRL & CCM_ANALOG_AUDIO_PLL1_GEN_CTRL_PLL_CLKE_MASK)
-        {
-            *&(CCM_ANALOG->AUDIO_PLL1_GEN_CTRL) &= ~CCM_ANALOG_AUDIO_PLL1_GEN_CTRL_PLL_CLKE_MASK;
-        }
-
-        if (CCM_ANALOG->AUDIO_PLL2_GEN_CTRL & CCM_ANALOG_AUDIO_PLL2_GEN_CTRL_PLL_CLKE_MASK)
-        {
-            *&(CCM_ANALOG->AUDIO_PLL2_GEN_CTRL) &= ~CCM_ANALOG_AUDIO_PLL2_GEN_CTRL_PLL_CLKE_MASK;
-        }
+        count--;
     }
 }
 
@@ -177,56 +161,52 @@ static void SRTM_SaiSdmaAdapter_RecycleRxMessage(srtm_message_t msg, void *param
 
 static void SRTM_SaiSdmaAdaptor_ResetLocalBuf(srtm_sai_sdma_runtime_t rtm)
 {
-    uint32_t i, n;
+    uint32_t i, n, alignment, maxPeriodSize;
 
-    if (rtm->localBuf.buf)
+    alignment = ((uint32_t)(rtm->bitWidth) >> 3U) * (rtm->streamMode == kSAI_Stereo ? 2UL : 1UL);
+
+    if ((alignment % SRTM_SAI_SDMA_MAX_LOCAL_PERIOD_ALIGNMENT) != 0U)
     {
-        memset(&rtm->localRtm.bufRtm, 0, sizeof(struct _srtm_sai_sdma_buf_runtime));
-        rtm->localRtm.periodSize =
+        alignment *= SRTM_SAI_SDMA_MAX_LOCAL_PERIOD_ALIGNMENT;
+    }
+
+    if (rtm->localBuf.buf != NULL)
+    {
+        (void)memset(&rtm->localRtm.bufRtm, 0, sizeof(struct _srtm_sai_sdma_buf_runtime));
+        maxPeriodSize =
             (rtm->localBuf.bufSize / rtm->localBuf.periods) & (~SRTM_SAI_SDMA_MAX_LOCAL_PERIOD_ALIGNMENT_MASK);
         /* Calculate how many local periods each remote period */
-        n                        = (rtm->periodSize + rtm->localRtm.periodSize - 1) / rtm->localRtm.periodSize;
-        rtm->localRtm.periodSize = ((rtm->periodSize + n - 1) / n + SRTM_SAI_SDMA_MAX_LOCAL_PERIOD_ALIGNMENT_MASK) &
+        n = (rtm->periodSize + maxPeriodSize - 1U) / maxPeriodSize;
+        /* Calculate local period size per remote period */
+        rtm->localRtm.periodSize = ((rtm->periodSize + n - 1U) / n + SRTM_SAI_SDMA_MAX_LOCAL_PERIOD_ALIGNMENT_MASK) &
                                    (~SRTM_SAI_SDMA_MAX_LOCAL_PERIOD_ALIGNMENT_MASK);
-        for (i = 0; i < SRTM_SAI_SDMA_MAX_LOCAL_BUF_PERIODS; i++)
+        /* The period size should be a multiple of bytes per sample */
+        rtm->localRtm.periodSize = (rtm->localRtm.periodSize + alignment - 1U) / alignment * alignment;
+        if (rtm->localRtm.periodSize > maxPeriodSize)
         {
-            rtm->localRtm.periodsInfo[i].dataSize     = 0;
+            rtm->localRtm.periodSize -= alignment;
+        }
+
+        for (i = 0U; i < SRTM_SAI_SDMA_MAX_LOCAL_BUF_PERIODS; i++)
+        {
+            rtm->localRtm.periodsInfo[i].dataSize     = 0U;
             rtm->localRtm.periodsInfo[i].endRemoteIdx = UINT32_MAX;
-            rtm->localRtm.periodsInfo[i].remoteIdx    = 0;
-            rtm->localRtm.periodsInfo[i].remoteOffset = 0;
+            rtm->localRtm.periodsInfo[i].remoteIdx    = 0U;
+            rtm->localRtm.periodsInfo[i].remoteOffset = 0U;
         }
     }
 }
 
-static void SRTM_SaiSdmaAdapter_GetXfer(srtm_sai_sdma_runtime_t rtm, sai_transfer_t *xfer)
+static status_t SRTM_SaiSdmaAdapter_PeriodTransferSDMA(srtm_sai_sdma_adapter_t handle, srtm_audio_dir_t dir)
 {
-    srtm_sai_sdma_buf_runtime_t bufRtm;
-
-    if (rtm->localBuf.buf)
-    {
-        bufRtm         = &rtm->localRtm.bufRtm;
-        xfer->dataSize = rtm->localRtm.periodsInfo[bufRtm->loadIdx].dataSize;
-        xfer->data     = rtm->localBuf.buf + bufRtm->loadIdx * rtm->localRtm.periodSize;
-    }
-    else
-    {
-        bufRtm         = &rtm->bufRtm;
-        xfer->dataSize = rtm->periodSize;
-        xfer->data     = rtm->bufAddr + bufRtm->loadIdx * rtm->periodSize;
-    }
-}
-
-static void SRTM_SaiSdmaAdapter_DmaTransfer(srtm_sai_sdma_adapter_t handle, srtm_audio_dir_t dir)
-{
-    srtm_sai_sdma_runtime_t rtm = dir == SRTM_AudioDirTx ? &handle->txRtm : &handle->rxRtm;
-    srtm_sai_sdma_buf_runtime_t bufRtm;
-    uint32_t i;
-    status_t status;
-    uint32_t periods;
+    status_t status = kStatus_Success;
+    uint32_t count;
     sai_transfer_t xfer;
-    uint32_t num;
+    srtm_sai_sdma_runtime_t rtm = (dir == SRTM_AudioDirTx ? &handle->txRtm : &handle->rxRtm);
+    srtm_sai_sdma_buf_runtime_t bufRtm;
+    uint32_t periods;
 
-    if (rtm->localBuf.buf)
+    if (rtm->localBuf.buf != NULL)
     {
         bufRtm  = &rtm->localRtm.bufRtm;
         periods = rtm->localBuf.periods;
@@ -237,11 +217,12 @@ static void SRTM_SaiSdmaAdapter_DmaTransfer(srtm_sai_sdma_adapter_t handle, srtm
         periods = rtm->periods;
     }
 
-    num = bufRtm->remainingLoadPeriods;
-
-    for (i = 0; i < num; i++)
+    if (rtm->localBuf.buf !=
+        NULL) /* The period size in local buffer should be smaller than the max size of one DMA transfer. */
     {
-        SRTM_SaiSdmaAdapter_GetXfer(rtm, &xfer);
+        xfer.dataSize = rtm->localRtm.periodsInfo[bufRtm->loadIdx].dataSize;
+        xfer.data     = rtm->localBuf.buf + bufRtm->loadIdx * rtm->localRtm.periodSize;
+
         if (dir == SRTM_AudioDirTx)
         {
             status = SAI_TransferSendSDMA(handle->sai, &rtm->saiHandle, &xfer);
@@ -250,13 +231,99 @@ static void SRTM_SaiSdmaAdapter_DmaTransfer(srtm_sai_sdma_adapter_t handle, srtm
         {
             status = SAI_TransferReceiveSDMA(handle->sai, &rtm->saiHandle, &xfer);
         }
+
+        if (status != kStatus_Success)
+        {
+            /* Audio queue full */
+            return status;
+        }
+        bufRtm->loadIdx = (bufRtm->loadIdx + 1U) % periods;
+        bufRtm->remainingLoadPeriods--;
+    }
+    else
+    {
+        count = rtm->periodSize - bufRtm->offset;
+        while (count > rtm->maxXferSize) /* Split the period into several DMA transfer. */
+        {
+            xfer.dataSize = rtm->maxXferSize;
+            xfer.data     = rtm->bufAddr + bufRtm->loadIdx * rtm->periodSize + bufRtm->offset;
+            if (dir == SRTM_AudioDirTx)
+            {
+                status = SAI_TransferSendSDMA(handle->sai, &rtm->saiHandle, &xfer);
+            }
+            else
+            {
+                status = SAI_TransferReceiveSDMA(handle->sai, &rtm->saiHandle, &xfer);
+            }
+
+            if (status == kStatus_Success)
+            {
+                count = count - rtm->maxXferSize;
+                bufRtm->offset += rtm->maxXferSize;
+            }
+            else
+            {
+                return status;
+            }
+        }
+        if (count > 0U)
+        {
+            xfer.dataSize = count;
+            xfer.data     = rtm->bufAddr + bufRtm->loadIdx * rtm->periodSize + bufRtm->offset;
+
+            if (dir == SRTM_AudioDirTx)
+            {
+                status = SAI_TransferSendSDMA(handle->sai, &rtm->saiHandle, &xfer);
+            }
+            else
+            {
+                status = SAI_TransferReceiveSDMA(handle->sai, &rtm->saiHandle, &xfer);
+            }
+
+            if (status != kStatus_Success)
+            {
+                return status;
+            }
+            bufRtm->offset = 0; /* All the transfers for the one period are submitted. */
+        }
+
+        if (bufRtm->offset == 0U) /* All transmissions in a preiod are submitted successfully. */
+        {
+            bufRtm->loadIdx = (bufRtm->loadIdx + 1U) % rtm->periods;
+            bufRtm->remainingLoadPeriods--;
+        }
+    }
+
+    return kStatus_Success;
+}
+
+static void SRTM_SaiSdmaAdapter_DmaTransfer(srtm_sai_sdma_adapter_t handle, srtm_audio_dir_t dir)
+{
+    srtm_sai_sdma_runtime_t rtm = dir == SRTM_AudioDirTx ? &handle->txRtm : &handle->rxRtm;
+    srtm_sai_sdma_buf_runtime_t bufRtm;
+    uint32_t i;
+    status_t status;
+    uint32_t num;
+
+    if (rtm->localBuf.buf != NULL)
+    {
+        bufRtm = &rtm->localRtm.bufRtm;
+    }
+    else
+    {
+        bufRtm = &rtm->bufRtm;
+    }
+
+    num = bufRtm->remainingLoadPeriods;
+
+    for (i = 0U; i < num; i++)
+    {
+        status = SRTM_SaiSdmaAdapter_PeriodTransferSDMA(handle, dir);
         if (status != kStatus_Success)
         {
             /* Audio queue full */
             break;
         }
-        bufRtm->loadIdx = (bufRtm->loadIdx + 1) % periods;
-        bufRtm->remainingLoadPeriods--;
     }
 }
 
@@ -271,36 +338,36 @@ static void SRTM_SaiSdmaAdapter_CopyData(srtm_sai_sdma_adapter_t handle)
     srcRtm = &rtm->bufRtm;
     dstRtm = &rtm->localRtm.bufRtm;
 
-    while (srcRtm->remainingLoadPeriods && (rtm->localBuf.periods - dstRtm->remainingPeriods))
+    while ((srcRtm->remainingLoadPeriods != 0U) && ((rtm->localBuf.periods - dstRtm->remainingPeriods) != 0U))
     {
         src     = rtm->bufAddr + srcRtm->loadIdx * rtm->periodSize;
         dst     = rtm->localBuf.buf + dstRtm->leadIdx * rtm->localRtm.periodSize;
         srcSize = rtm->periodSize - srcRtm->offset;
         dstSize = rtm->localRtm.periodSize - dstRtm->offset;
         size    = MIN(srcSize, dstSize);
-        SRTM_SaidmaAdapter_LocalBufferUpdate((uint32_t *)(dst + dstRtm->offset), (uint32_t *)(src + srcRtm->offset),
-                                             size / 4U);
+        SRTM_SaidmaAdapter_LocalBufferUpdate((uint32_t *)(void *)(dst + dstRtm->offset),
+                                             (uint32_t *)(void *)(src + srcRtm->offset), size / 4U);
 
         srcRtm->offset += size;
         dstRtm->offset += size;
         if (srcRtm->offset == rtm->periodSize) /* whole remote buffer loaded */
         {
             rtm->localRtm.periodsInfo[dstRtm->leadIdx].endRemoteIdx = srcRtm->loadIdx;
-            srcRtm->loadIdx                                         = (srcRtm->loadIdx + 1) % rtm->periods;
-            srcRtm->offset                                          = 0;
+            srcRtm->loadIdx                                         = (srcRtm->loadIdx + 1U) % rtm->periods;
+            srcRtm->offset                                          = 0U;
             srcRtm->remainingLoadPeriods--;
         }
 
-        if (dstRtm->offset == rtm->localRtm.periodSize || srcRtm->offset == 0)
+        if ((dstRtm->offset == rtm->localRtm.periodSize) || (srcRtm->offset == 0U))
         {
             /* local period full or remote period ends */
             rtm->localRtm.periodsInfo[dstRtm->leadIdx].dataSize     = dstRtm->offset;
             rtm->localRtm.periodsInfo[dstRtm->leadIdx].remoteIdx    = srcRtm->loadIdx;
             rtm->localRtm.periodsInfo[dstRtm->leadIdx].remoteOffset = srcRtm->offset;
-            dstRtm->leadIdx                                         = (dstRtm->leadIdx + 1) % rtm->localBuf.periods;
+            dstRtm->leadIdx                                         = (dstRtm->leadIdx + 1U) % rtm->localBuf.periods;
             dstRtm->remainingPeriods++;
             dstRtm->remainingLoadPeriods++;
-            dstRtm->offset = 0;
+            dstRtm->offset = 0U;
         }
     }
 }
@@ -314,7 +381,7 @@ static void SRTM_SaiSdmaAdapter_AddNewPeriods(srtm_sai_sdma_runtime_t rtm, uint3
     assert(periodIdx < rtm->periods);
 
     newPeriods = (periodIdx + rtm->periods - bufRtm->leadIdx) % rtm->periods;
-    if (newPeriods == 0) /* in case buffer is empty and filled all */
+    if (newPeriods == 0U) /* in case buffer is empty and filled all */
     {
         newPeriods = rtm->periods;
     }
@@ -330,7 +397,7 @@ static void SRTM_SaiSdmaAdapter_Transfer(srtm_sai_sdma_adapter_t handle, srtm_au
 {
     srtm_sai_sdma_runtime_t rtm = &handle->txRtm;
 
-    if (dir == SRTM_AudioDirTx && rtm->localBuf.buf)
+    if ((dir == SRTM_AudioDirTx) && (rtm->localBuf.buf != NULL))
     {
         if (rtm->localRtm.bufRtm.remainingPeriods <= rtm->localBuf.threshold)
         {
@@ -341,7 +408,7 @@ static void SRTM_SaiSdmaAdapter_Transfer(srtm_sai_sdma_adapter_t handle, srtm_au
     /* Trigger DMA if having more data to playback/record. */
     SRTM_SaiSdmaAdapter_DmaTransfer(handle, dir);
 
-    if (rtm->freeRun && rtm->bufRtm.remainingPeriods < rtm->periods)
+    if (rtm->freeRun && (rtm->bufRtm.remainingPeriods < rtm->periods))
     {
         /* In free run, we assume consumed period is filled immediately. */
         SRTM_SaiSdmaAdapter_AddNewPeriods(rtm, rtm->bufRtm.chaseIdx);
@@ -363,6 +430,14 @@ static void SRTM_SaiSdmaAdapter_RxTransferProc(srtm_dispatcher_t dispatcher, voi
 {
     srtm_sai_sdma_adapter_t handle = (srtm_sai_sdma_adapter_t)param1;
     srtm_sai_sdma_runtime_t rtm    = &handle->rxRtm;
+    srtm_sai_adapter_t adapter     = &handle->adapter;
+    uint32_t chaseIdx              = (uint32_t)(uint8_t *)param2;
+
+    if ((rtm->suspendState == SRTM_Suspended) && (rtm->dataCallback != NULL) && (chaseIdx < rtm->periods))
+    {
+        rtm->dataCallback(adapter, (void *)(rtm->bufAddr + chaseIdx * rtm->periodSize), rtm->periodSize,
+                          rtm->dataCallbackParam);
+    }
 
     if (rtm->state == SRTM_AudioStateStarted)
     {
@@ -377,13 +452,15 @@ static void SRTM_SaiSdmaTxCallback(I2S_Type *sai, sai_sdma_handle_t *sdmaHandle,
     srtm_sai_sdma_runtime_t rtm    = &handle->txRtm;
     srtm_sai_adapter_t adapter     = &handle->adapter;
     bool consumed                  = true;
-    if (rtm->localBuf.buf)
+    bool periodDone                = false;
+
+    if (rtm->localBuf.buf != NULL)
     {
         if (rtm->localRtm.periodsInfo[rtm->localRtm.bufRtm.chaseIdx].endRemoteIdx < rtm->periods)
         {
             /* The local buffer contains data from remote buffer end */
             rtm->bufRtm.remainingPeriods--; /* Now one of the remote buffer has been consumed. */
-            rtm->bufRtm.chaseIdx = (rtm->bufRtm.chaseIdx + 1) % rtm->periods;
+            rtm->bufRtm.chaseIdx = (rtm->bufRtm.chaseIdx + 1U) % rtm->periods;
             rtm->localRtm.periodsInfo[rtm->localRtm.bufRtm.chaseIdx].endRemoteIdx = UINT32_MAX;
         }
         else
@@ -395,28 +472,53 @@ static void SRTM_SaiSdmaTxCallback(I2S_Type *sai, sai_sdma_handle_t *sdmaHandle,
         rtm->finishedBufOffset = rtm->localRtm.periodsInfo[rtm->localRtm.bufRtm.chaseIdx].remoteIdx * rtm->periodSize +
                                  rtm->localRtm.periodsInfo[rtm->localRtm.bufRtm.chaseIdx].remoteOffset;
         rtm->localRtm.bufRtm.remainingPeriods--;
-        rtm->localRtm.bufRtm.chaseIdx = (rtm->localRtm.bufRtm.chaseIdx + 1) % rtm->localBuf.periods;
+        rtm->localRtm.bufRtm.chaseIdx = (rtm->localRtm.bufRtm.chaseIdx + 1U) % rtm->localBuf.periods;
+
+        periodDone = true;
     }
     else
     {
-        rtm->bufRtm.remainingPeriods--;
-        rtm->bufRtm.chaseIdx   = (rtm->bufRtm.chaseIdx + 1) % rtm->periods;
-        rtm->finishedBufOffset = rtm->bufRtm.chaseIdx * rtm->periodSize;
+        if (rtm->curXferIdx == rtm->countsPerPeriod)
+        {
+            rtm->curXferIdx = 1U;
+            periodDone      = true;
+
+            rtm->bufRtm.remainingPeriods--;
+            rtm->bufRtm.chaseIdx   = (rtm->bufRtm.chaseIdx + 1U) % rtm->periods;
+            rtm->finishedBufOffset = rtm->bufRtm.chaseIdx * rtm->periodSize;
+        }
+        else
+        {
+            rtm->curXferIdx++;
+            periodDone = false;
+            SRTM_SaiSdmaAdapter_DmaTransfer(handle, SRTM_AudioDirTx);
+        }
     }
 
-    /* Notify period done message */
-    if (adapter->service && adapter->periodDone && consumed &&
-        (rtm->freeRun || rtm->bufRtm.remainingPeriods <= handle->txConfig.threshold))
+    if (periodDone)
     {
-        /* In free run, we need to make buffer as full as possible, threshold is ignored. */
-        adapter->periodDone(adapter->service, SRTM_AudioDirTx, handle->index, rtm->bufRtm.chaseIdx);
-    }
+        /* Notify period done message */
+        if ((adapter->service != NULL) && (adapter->periodDone != NULL) && consumed &&
+            (rtm->freeRun || (rtm->bufRtm.remainingPeriods <= handle->txConfig.threshold)))
+        {
+            /* In free run, we need to make buffer as full as possible, threshold is ignored. */
+            (void)adapter->periodDone(adapter->service, SRTM_AudioDirTx, handle->index, rtm->bufRtm.chaseIdx);
+        }
 
-    if (adapter->service && rtm->state == SRTM_AudioStateStarted && rtm->proc)
-    {
-        /* Fill data or add buffer to DMA scatter-gather list if there's remaining buffer to send */
-        SRTM_Dispatcher_PostProc(adapter->service->dispatcher, rtm->proc);
-        rtm->proc = NULL;
+        if ((adapter->service != NULL) && (rtm->proc != NULL))
+        {
+            /* Fill data or add buffer to DMA scatter-gather list if there's remaining buffer to send */
+            (void)SRTM_Dispatcher_PostProc(adapter->service->dispatcher, rtm->proc);
+            rtm->proc = NULL;
+        }
+        else if (rtm->proc == NULL)
+        {
+            SRTM_DEBUG_MESSAGE(SRTM_DEBUG_VERBOSE_WARN, "%s: proc busy!\r\n", __func__);
+        }
+        else
+        {
+            ; /* Intentional empty */
+        }
     }
 }
 
@@ -425,25 +527,52 @@ static void SRTM_SaiSdmaRxCallback(I2S_Type *sai, sai_sdma_handle_t *sdmaHandle,
     srtm_sai_sdma_adapter_t handle = (srtm_sai_sdma_adapter_t)userData;
     srtm_sai_sdma_runtime_t rtm    = &handle->rxRtm;
     srtm_sai_adapter_t adapter     = &handle->adapter;
+    uint32_t chaseIdx              = 0xFFFFFFFFU;
 
-    rtm->bufRtm.remainingPeriods--;
-    rtm->bufRtm.chaseIdx   = (rtm->bufRtm.chaseIdx + 1) % rtm->periods;
-    rtm->finishedBufOffset = rtm->bufRtm.chaseIdx * rtm->periodSize;
-
-    /* Rx is always freeRun, we assume filled period is consumed immediately. */
-    SRTM_SaiSdmaAdapter_AddNewPeriods(rtm, rtm->bufRtm.chaseIdx);
-
-    if (adapter->service && adapter->periodDone)
+    if (rtm->curXferIdx == rtm->countsPerPeriod) /* All the transfer in a period is done. */
     {
-        /* Rx is always freeRun */
-        adapter->periodDone(adapter->service, SRTM_AudioDirRx, handle->index, rtm->bufRtm.chaseIdx);
+        rtm->curXferIdx = 1U;
+
+        rtm->bufRtm.remainingPeriods--;
+        rtm->bufRtm.chaseIdx   = (rtm->bufRtm.chaseIdx + 1U) % rtm->periods;
+        rtm->finishedBufOffset = rtm->bufRtm.chaseIdx * rtm->periodSize;
+
+        /* Rx is always freeRun, we assume filled period is consumed immediately. */
+        SRTM_SaiSdmaAdapter_AddNewPeriods(rtm, rtm->bufRtm.chaseIdx);
+
+        if ((adapter->service != NULL) && (adapter->periodDone != NULL))
+        {
+            /* Rx is always freeRun */
+            if ((rtm->suspendState != SRTM_Suspended) || (rtm->dataCallback == NULL))
+            {
+                (void)adapter->periodDone(adapter->service, SRTM_AudioDirRx, handle->index, rtm->bufRtm.chaseIdx);
+            }
+            else
+            {
+                chaseIdx = rtm->bufRtm.chaseIdx; /* For callback */
+            }
+        }
+
+        if ((adapter->service != NULL) && (rtm->proc != NULL))
+        {
+            rtm->proc->procMsg.param2 = (void *)(uint8_t *)chaseIdx;
+            /* Add buffer to DMA scatter-gather list if there's remaining buffer to record. */
+            (void)SRTM_Dispatcher_PostProc(adapter->service->dispatcher, rtm->proc);
+            rtm->proc = NULL;
+        }
+        else if (rtm->proc == NULL)
+        {
+            SRTM_DEBUG_MESSAGE(SRTM_DEBUG_VERBOSE_WARN, "%s: proc busy!\r\n", __func__);
+        }
+        else
+        {
+            ; /* Intentional empty. */
+        }
     }
-
-    if (adapter->service && rtm->state == SRTM_AudioStateStarted && rtm->proc)
+    else
     {
-        /* Add buffer to DMA scatter-gather list if there's remaining buffer to send */
-        SRTM_Dispatcher_PostProc(adapter->service->dispatcher, rtm->proc);
-        rtm->proc = NULL;
+        rtm->curXferIdx++;
+        SRTM_SaiSdmaAdapter_DmaTransfer(handle, SRTM_AudioDirRx);
     }
 }
 
@@ -451,15 +580,14 @@ static void SRTM_SaiSdmaAdapter_InitSAI(srtm_sai_sdma_adapter_t handle, srtm_aud
 {
     srtm_sai_sdma_runtime_t rtm = dir == SRTM_AudioDirTx ? &handle->txRtm : &handle->rxRtm;
 
-    SAI_Init(handle->sai);
     if (dir == SRTM_AudioDirTx)
     {
         SDMA_CreateHandle(&handle->txDmaHandle, handle->dma, handle->txConfig.dmaChannel, &handle->txConfig.txcontext);
         handle->txDmaHandle.priority = handle->txConfig.ChannelPriority;
-        if (rtm->format >= SRTM_Audio_DSD8bits) /* DSD mode, need enable SDMA multi fifo */
+        if (rtm->format >= (uint8_t)SRTM_Audio_DSD8bits) /* DSD mode, need enable SDMA multi fifo */
         {
-            SDMA_LoadScript(handle->dma, SCRIPT_CODE_START_ADDR, (void *)sdma_multi_fifo_script,
-                            SCRIPT_CODE_SIZE * sizeof(short));
+            SDMA_LoadScript(handle->dma, FSL_SDMA_SCRIPT_CODE_START_ADDR, (void *)g_sdma_multi_fifo_script,
+                            FSL_SDMA_SCRIPT_CODE_SIZE);
         }
         SAI_TransferTxCreateHandleSDMA(handle->sai, &handle->txRtm.saiHandle, SRTM_SaiSdmaTxCallback, (void *)handle,
                                        &handle->txDmaHandle, handle->txConfig.eventSource);
@@ -484,85 +612,88 @@ static void SRTM_SaiSdmaAdapter_DeinitSAI(srtm_sai_sdma_adapter_t handle, srtm_a
         SAI_RxReset(handle->sai);
     }
 }
+
 static void SRTM_SaiSdmaAdapter_ReconfigSAI(srtm_sai_adapter_t adapter,
                                             srtm_audio_dir_t dir,
                                             uint8_t format,
                                             uint32_t srate)
 {
-    srtm_sai_sdma_adapter_t handle = (srtm_sai_sdma_adapter_t)adapter;
+    srtm_sai_sdma_adapter_t handle = (srtm_sai_sdma_adapter_t)(void *)adapter;
     srtm_sai_sdma_runtime_t rtm    = dir == SRTM_AudioDirTx ? &handle->txRtm : &handle->rxRtm;
-    uint32_t sai_source_clk;
-    if (format >= SRTM_Audio_DSD8bits && format <= SRTM_Audio_DSD32bits)
+    srtm_sai_sdma_config_t *cfg    = dir == SRTM_AudioDirTx ? &handle->txConfig : &handle->rxConfig;
+    uint32_t saiSrcClk;
+
+    if ((format >= (uint8_t)SRTM_Audio_DSD8bits) && (format <= (uint8_t)SRTM_Audio_DSD32bits))
     {
-        format = format - 45U; /* Skip due to the format value from 3 to 47 not defined in SDK. */
-        srate  = srate / 2U;
-    }
-    if (rtm->format != format)
-    {
-        if (format <= SRTM_Audio_Stereo32Bits) /* PCM mode */
-        {
-            CLOCK_SetRootDivider(kCLOCK_RootSai1, 1U,
-                                 16U); /* To get 49.152MHZ which supports 768Khz sample frequency music stream. */
-            IOMUXC_SetPinMux(IOMUXC_SAI1_RXD7_SAI1_TX_SYNC, 0U);
-        }
-        else
-        {
-            CLOCK_SetRootDivider(kCLOCK_RootSai1, 1U, 32U); /* DSD mode, to get 22.5792MHZ. */
-            IOMUXC_SetPinMux(IOMUXC_SAI1_RXD7_SAI1_TX_DATA4, 0U);
-        }
+        srate = srate / 2U;
     }
 
-    if (rtm->srate != srate)
+    if (((rtm->format != format) || (rtm->srate != srate)) && (cfg->extendConfig.audioDevConf != NULL))
     {
-        if (srate % 11025 == 0U)
-        {
-            CLOCK_SetRootMux(
-                kCLOCK_RootSai1,
-                kCLOCK_SaiRootmuxAudioPll2); /* Set SAI source to Audio PLL2 722534399HZ to get 22.5792MHz */
-            sai_source_clk = CLOCK_GetPllFreq(kCLOCK_AudioPll2Ctrl) / (CLOCK_GetRootPreDivider(kCLOCK_RootSai1)) /
-                             (CLOCK_GetRootPostDivider(kCLOCK_RootSai1));
-        }
-        else
-        {
-            CLOCK_SetRootMux(kCLOCK_RootSai1,
-                             kCLOCK_SaiRootmuxAudioPll1); /* Set SAI source to Audio PLL1 786432000HZ to get 49.152Mhz*/
-            sai_source_clk = CLOCK_GetPllFreq(kCLOCK_AudioPll1Ctrl) / (CLOCK_GetRootPreDivider(kCLOCK_RootSai1)) /
-                             (CLOCK_GetRootPostDivider(kCLOCK_RootSai1));
-        }
-        if (dir == SRTM_AudioDirTx)
-        {
-            handle->txConfig.mclkConfig.mclkSourceClkHz = sai_source_clk;
-            handle->txConfig.mclkConfig.mclkHz =
-                sai_source_clk; /* Set the output mclk equal to its source clk by default */
-        }
-        else
-        {
-            handle->rxConfig.mclkConfig.mclkSourceClkHz = sai_source_clk;
-            handle->rxConfig.mclkConfig.mclkHz =
-                sai_source_clk; /* Set the output mclk equal to its source clk by default */
-        }
+        saiSrcClk                       = cfg->extendConfig.audioDevConf((srtm_audio_format_type_t)format, srate);
+        cfg->mclkConfig.mclkSourceClkHz = saiSrcClk;
+        cfg->mclkConfig.mclkHz          = saiSrcClk;
     }
 }
 
-static void SRTM_SaiSdmaAdapter_SetFormat(srtm_sai_sdma_adapter_t handle, srtm_audio_dir_t dir, bool sync)
+static void SRTM_SaiSdmaAdapter_SetFormat(srtm_sai_sdma_adapter_t handle, srtm_audio_dir_t dir)
 {
     srtm_sai_sdma_config_t *cfg = dir == SRTM_AudioDirTx ? &handle->txConfig : &handle->rxConfig;
-    srtm_sai_sdma_runtime_t rtm = dir == SRTM_AudioDirTx ? &handle->txRtm : &handle->rxRtm;
-    uint32_t channels           = rtm->streamMode == kSAI_Stereo ? 2U : 1U;
-
-    cfg->config.serialData.dataMaskedWord      = rtm->streamMode;
-    cfg->config.serialData.dataWord0Length     = rtm->bitWidth;
-    cfg->config.serialData.dataWordLength      = rtm->bitWidth;
-    cfg->config.serialData.dataWordNLength     = rtm->bitWidth;
-    cfg->config.serialData.dataFirstBitShifted = rtm->bitWidth;
-    cfg->config.frameSync.frameSyncWidth       = rtm->bitWidth;
-
-    /* set master clock */
-    SAI_SetMasterClockConfig(handle->sai, &cfg->mclkConfig);
+    srtm_sai_sdma_runtime_t rtm, paramRtm;
+    uint8_t channels, bitWidth;
+    bool sync = cfg->config.syncMode == kSAI_ModeSync;
 
     if (dir == SRTM_AudioDirTx)
     {
-        if (rtm->format >= SRTM_Audio_DSD8bits) /* DSD mode */
+        rtm = &handle->txRtm;
+        if (!rtm->paramSet)
+        {
+            /* There must be a path with param configured before start. */
+            assert(handle->rxRtm.paramSet);
+            paramRtm = &handle->rxRtm;
+        }
+        else
+        {
+            paramRtm = (sync && (handle->rxConfig.config.syncMode == kSAI_ModeAsync) && handle->rxRtm.paramSet) ?
+                           &handle->rxRtm :
+                           rtm;
+        }
+    }
+    else
+    {
+        rtm = &handle->rxRtm;
+        if (!rtm->paramSet)
+        {
+            /* There must be a path with param configured before start. */
+            assert(handle->txRtm.paramSet);
+            paramRtm = &handle->txRtm;
+        }
+        else
+        {
+            paramRtm = (sync && (handle->txConfig.config.syncMode == kSAI_ModeAsync) && handle->txRtm.paramSet) ?
+                           &handle->txRtm :
+                           rtm;
+        }
+    }
+
+    channels                                   = paramRtm->streamMode == kSAI_Stereo ? 2U : 1U;
+    bitWidth                                   = paramRtm->bitWidth == 24U ? 32U : paramRtm->bitWidth;
+    cfg->config.serialData.dataMaskedWord      = (uint32_t)paramRtm->streamMode;
+    cfg->config.serialData.dataWord0Length     = bitWidth;
+    cfg->config.serialData.dataWordLength      = bitWidth;
+    cfg->config.serialData.dataWordNLength     = bitWidth;
+    cfg->config.serialData.dataFirstBitShifted = paramRtm->bitWidth;
+    cfg->config.frameSync.frameSyncWidth       = bitWidth;
+
+    /* set master clock to async mclk. */
+    if (!sync)
+    {
+        SAI_SetMasterClockConfig(handle->sai, &cfg->mclkConfig);
+    }
+
+    if (dir == SRTM_AudioDirTx)
+    {
+        if (rtm->format >= (uint8_t)SRTM_Audio_DSD8bits) /* DSD mode */
         {
             cfg->config.channelMask          = 1U << cfg->dataLine1 | 1U << cfg->dataLine2;
             cfg->config.serialData.dataOrder = kSAI_DataLSB; /* LSB transfer first */
@@ -574,25 +705,23 @@ static void SRTM_SaiSdmaAdapter_SetFormat(srtm_sai_sdma_adapter_t handle, srtm_a
             cfg->config.channelMask          = 1U << cfg->dataLine1;
             cfg->config.serialData.dataOrder = kSAI_DataMSB; /* MSB transfer first */
         }
-        rtm = sync ? &handle->rxRtm : &handle->txRtm;
         SAI_TransferTxSetConfigSDMA(handle->sai, &rtm->saiHandle, &cfg->config);
         /* set bit clock */
-        SAI_TxSetBitClockRate(handle->sai, cfg->mclkConfig.mclkHz, rtm->srate, rtm->bitWidth, channels);
+        SAI_TxSetBitClockRate(handle->sai, cfg->mclkConfig.mclkHz, paramRtm->srate, bitWidth, channels);
     }
     else
     {
         cfg->config.channelMask = 1U << cfg->dataLine1;
-        rtm                     = sync ? &handle->txRtm : &handle->rxRtm;
         SAI_TransferRxSetConfigSDMA(handle->sai, &rtm->saiHandle, &cfg->config);
         /* set bit clock */
-        SAI_RxSetBitClockRate(handle->sai, cfg->mclkConfig.mclkHz, rtm->srate, rtm->bitWidth, channels);
+        SAI_RxSetBitClockRate(handle->sai, cfg->mclkConfig.mclkHz, paramRtm->srate, bitWidth, channels);
     }
 }
 
 /* Currently only 1 audio instance is adequate, so index is just ignored */
 static srtm_status_t SRTM_SaiSdmaAdapter_Open(srtm_sai_adapter_t adapter, srtm_audio_dir_t dir, uint8_t index)
 {
-    srtm_sai_sdma_adapter_t handle = (srtm_sai_sdma_adapter_t)adapter;
+    srtm_sai_sdma_adapter_t handle = (srtm_sai_sdma_adapter_t)(void *)adapter;
     srtm_sai_sdma_runtime_t rtm    = dir == SRTM_AudioDirTx ? &handle->txRtm : &handle->rxRtm;
 
     SRTM_DEBUG_MESSAGE(SRTM_DEBUG_VERBOSE_INFO, "%s: %s%d\r\n", __func__, saiDirection[dir], index);
@@ -607,21 +736,25 @@ static srtm_status_t SRTM_SaiSdmaAdapter_Open(srtm_sai_adapter_t adapter, srtm_a
         return SRTM_Status_InvalidState;
     }
 
-    /* Enable Audio Pll. */
-    SRTM_SaiSdmaApater_AduioPllGateEnable(true);
-
-    rtm->state   = SRTM_AudioStateOpened;
-    rtm->freeRun = true;
+    rtm->state    = SRTM_AudioStateOpened;
+    rtm->freeRun  = true;
+    rtm->paramSet = false;
 
     return SRTM_Status_Success;
 }
 
 static srtm_status_t SRTM_SaiSdmaAdapter_Start(srtm_sai_adapter_t adapter, srtm_audio_dir_t dir, uint8_t index)
 {
-    srtm_sai_sdma_adapter_t handle = (srtm_sai_sdma_adapter_t)adapter;
+    srtm_sai_sdma_adapter_t handle = (srtm_sai_sdma_adapter_t)(void *)adapter;
     srtm_sai_sdma_runtime_t thisRtm, otherRtm;
     srtm_sai_sdma_config_t *thisCfg, *otherCfg;
     srtm_audio_dir_t otherDir;
+
+    uint32_t *threshold = dir == SRTM_AudioDirTx ? &handle->txConfig.threshold : &handle->rxConfig.threshold;
+    uint32_t *guardTime = dir == SRTM_AudioDirTx ? &handle->txConfig.guardTime : &handle->rxConfig.guardTime;
+
+    uint8_t channelNum;
+    uint32_t guardPeroids;
 
     SRTM_DEBUG_MESSAGE(SRTM_DEBUG_VERBOSE_INFO, "%s: %s%d\r\n", __func__, saiDirection[dir], index);
     if (dir == SRTM_AudioDirTx)
@@ -648,17 +781,27 @@ static srtm_status_t SRTM_SaiSdmaAdapter_Start(srtm_sai_adapter_t adapter, srtm_
         return SRTM_Status_InvalidState;
     }
 
-    if (!thisRtm->periods)
+    if (thisRtm->periods == 0U)
     {
         SRTM_DEBUG_MESSAGE(SRTM_DEBUG_VERBOSE_ERROR, "%s: %s valid buffer not set!\r\n", __func__, saiDirection[dir]);
         return SRTM_Status_InvalidState;
     }
 
-    if (!thisRtm->srate)
+    if (thisRtm->srate == 0U)
     {
         SRTM_DEBUG_MESSAGE(SRTM_DEBUG_VERBOSE_ERROR, "%s: %s valid format param not set!\r\n", __func__,
                            saiDirection[dir]);
         return SRTM_Status_InvalidState;
+    }
+
+    /* Init the audio device. */
+    if (otherRtm->state != SRTM_AudioStateStarted)
+    {
+        SAI_Init(handle->sai);
+        if (thisCfg->extendConfig.audioDevInit != NULL)
+        {
+            thisCfg->extendConfig.audioDevInit(true);
+        }
     }
 
     if (otherCfg->config.syncMode == kSAI_ModeSync)
@@ -669,7 +812,7 @@ static srtm_status_t SRTM_SaiSdmaAdapter_Start(srtm_sai_adapter_t adapter, srtm_
             /* Only when the other direction is not started, we can initialize, else the device setting is reused. */
             SRTM_SaiSdmaAdapter_InitSAI(handle, dir);
             /* Use our own format. */
-            SRTM_SaiSdmaAdapter_SetFormat(handle, dir, false);
+            SRTM_SaiSdmaAdapter_SetFormat(handle, dir);
         }
     }
     else
@@ -678,19 +821,40 @@ static srtm_status_t SRTM_SaiSdmaAdapter_Start(srtm_sai_adapter_t adapter, srtm_
            Do initialization by ourselves. */
         SRTM_SaiSdmaAdapter_InitSAI(handle, dir);
         /* Use our own format. */
-        SRTM_SaiSdmaAdapter_SetFormat(handle, dir, false);
+        SRTM_SaiSdmaAdapter_SetFormat(handle, dir);
 
-        if (thisCfg->config.syncMode == kSAI_ModeSync && otherRtm->state != SRTM_AudioStateStarted)
+        if ((thisCfg->config.syncMode == kSAI_ModeSync) && (otherRtm->state != SRTM_AudioStateStarted))
         {
             /* This direction in sync mode and the other not started, need to initialize the other direction. */
             SRTM_SaiSdmaAdapter_InitSAI(handle, otherDir);
             /* Set other direction format to ours. */
-            SRTM_SaiSdmaAdapter_SetFormat(handle, otherDir, true);
+            SRTM_SaiSdmaAdapter_SetFormat(handle, otherDir);
         }
     }
 
+    if (thisRtm->streamMode == kSAI_Stereo)
+    {
+        channelNum = 2U;
+    }
+    else
+    {
+        channelNum = 1U;
+    }
+    /* Caculate the threshold based on the guardTime.*/
+    if (*guardTime != 0U)
+    {
+        guardPeroids = (uint32_t)((uint64_t)thisRtm->srate * thisRtm->bitWidth * channelNum * (*guardTime) /
+                                  ((uint64_t)thisRtm->periodSize * 8U * 1000U));
+        /* If the guardPeroids calculated based on the guardTime is larger than the threshold value ,
+         * then the threshold should be enlarged to make sure there is enough time for A core resume and fill the DDR
+         * buffer.
+         */
+        if (guardPeroids > *threshold)
+        {
+            *threshold = guardPeroids > thisRtm->periods ? thisRtm->periods : guardPeroids;
+        }
+    }
     thisRtm->state = SRTM_AudioStateStarted;
-
     /* Reset buffer index */
     thisRtm->bufRtm.loadIdx    = thisRtm->bufRtm.chaseIdx;
     thisRtm->bufRtm.offset     = 0;
@@ -710,7 +874,7 @@ static srtm_status_t SRTM_SaiSdmaAdapter_Start(srtm_sai_adapter_t adapter, srtm_
 
 static srtm_status_t SRTM_SaiSdmaAdapter_End(srtm_sai_adapter_t adapter, srtm_audio_dir_t dir, uint8_t index, bool stop)
 {
-    srtm_sai_sdma_adapter_t handle = (srtm_sai_sdma_adapter_t)adapter;
+    srtm_sai_sdma_adapter_t handle = (srtm_sai_sdma_adapter_t)(void *)adapter;
     srtm_sai_sdma_runtime_t thisRtm, otherRtm;
     srtm_sai_sdma_config_t *thisCfg, *otherCfg;
     srtm_audio_dir_t otherDir;
@@ -765,7 +929,7 @@ static srtm_status_t SRTM_SaiSdmaAdapter_End(srtm_sai_adapter_t adapter, srtm_au
             /* The other direction has dedicated clock, its stop will not affect this direction.
                Do deinitialization by ourselves. */
             SRTM_SaiSdmaAdapter_DeinitSAI(handle, dir);
-            if (thisCfg->config.syncMode == kSAI_ModeSync && otherRtm->state != SRTM_AudioStateStarted)
+            if ((thisCfg->config.syncMode == kSAI_ModeSync) && (otherRtm->state != SRTM_AudioStateStarted))
             {
                 /* This direction in sync mode and the other not started, need to deinitialize the other direction. */
                 SRTM_SaiSdmaAdapter_DeinitSAI(handle, otherDir);
@@ -776,10 +940,16 @@ static srtm_status_t SRTM_SaiSdmaAdapter_End(srtm_sai_adapter_t adapter, srtm_au
         {
             /* If both Tx and Rx are not running, we can deinitialize this SAI instance. */
             SAI_Deinit(handle->sai);
+            /* Deinit audio device. */
+            if (thisCfg->extendConfig.audioDevInit != NULL)
+            {
+                thisCfg->extendConfig.audioDevInit(false);
+            }
         }
     }
 
-    thisRtm->bufRtm.remainingPeriods = thisRtm->bufRtm.remainingLoadPeriods = 0;
+    thisCfg->threshold               = 1U;
+    thisRtm->bufRtm.remainingPeriods = thisRtm->bufRtm.remainingLoadPeriods = 0U;
     if (!thisRtm->freeRun)
     {
         thisRtm->readyIdx = thisRtm->bufRtm.leadIdx;
@@ -799,7 +969,7 @@ static srtm_status_t SRTM_SaiSdmaAdapter_Stop(srtm_sai_adapter_t adapter, srtm_a
 
 static srtm_status_t SRTM_SaiSdmaAdapter_Close(srtm_sai_adapter_t adapter, srtm_audio_dir_t dir, uint8_t index)
 {
-    srtm_sai_sdma_adapter_t handle = (srtm_sai_sdma_adapter_t)adapter;
+    srtm_sai_sdma_adapter_t handle = (srtm_sai_sdma_adapter_t)(void *)adapter;
     srtm_sai_sdma_runtime_t rtm    = dir == SRTM_AudioDirTx ? &handle->txRtm : &handle->rxRtm;
 
     SRTM_DEBUG_MESSAGE(SRTM_DEBUG_VERBOSE_INFO, "%s: %s%d\r\n", __func__, saiDirection[dir], index);
@@ -812,20 +982,20 @@ static srtm_status_t SRTM_SaiSdmaAdapter_Close(srtm_sai_adapter_t adapter, srtm_
 
     if (rtm->state != SRTM_AudioStateOpened)
     {
-        SRTM_SaiSdmaAdapter_End(adapter, dir, index, true);
+        (void)SRTM_SaiSdmaAdapter_End(adapter, dir, index, true);
     }
 
-    /* Disable the Audio Pll. */
-    SRTM_SaiSdmaApater_AduioPllGateEnable(false);
-
-    rtm->state = SRTM_AudioStateClosed;
+    rtm->state    = SRTM_AudioStateClosed;
+    rtm->paramSet = false;
 
     return SRTM_Status_Success;
 }
 
 static srtm_status_t SRTM_SaiSdmaAdapter_Pause(srtm_sai_adapter_t adapter, srtm_audio_dir_t dir, uint8_t index)
 {
-    srtm_sai_sdma_adapter_t handle = (srtm_sai_sdma_adapter_t)adapter;
+    srtm_sai_sdma_adapter_t handle = (srtm_sai_sdma_adapter_t)(void *)adapter;
+
+    SRTM_DEBUG_MESSAGE(SRTM_DEBUG_VERBOSE_INFO, "%s: %s%d\r\n", __func__, saiDirection[dir], index);
 
     if (dir == SRTM_AudioDirTx)
     {
@@ -847,7 +1017,7 @@ static srtm_status_t SRTM_SaiSdmaAdapter_Pause(srtm_sai_adapter_t adapter, srtm_
 
 static srtm_status_t SRTM_SaiSdmaAdapter_Restart(srtm_sai_adapter_t adapter, srtm_audio_dir_t dir, uint8_t index)
 {
-    srtm_sai_sdma_adapter_t handle = (srtm_sai_sdma_adapter_t)adapter;
+    srtm_sai_sdma_adapter_t handle = (srtm_sai_sdma_adapter_t)(void *)adapter;
 
     SRTM_DEBUG_MESSAGE(SRTM_DEBUG_VERBOSE_INFO, "%s: %s%d\r\n", __func__, saiDirection[dir], index);
 
@@ -872,8 +1042,9 @@ static srtm_status_t SRTM_SaiSdmaAdapter_Restart(srtm_sai_adapter_t adapter, srt
 static srtm_status_t SRTM_SaiSdmaAdapter_SetParam(
     srtm_sai_adapter_t adapter, srtm_audio_dir_t dir, uint8_t index, uint8_t format, uint8_t channels, uint32_t srate)
 {
-    srtm_sai_sdma_adapter_t handle = (srtm_sai_sdma_adapter_t)adapter;
+    srtm_sai_sdma_adapter_t handle = (srtm_sai_sdma_adapter_t)(void *)adapter;
     srtm_sai_sdma_runtime_t rtm    = dir == SRTM_AudioDirTx ? &handle->txRtm : &handle->rxRtm;
+    uint32_t bytePerSample;
 
     SRTM_DEBUG_MESSAGE(SRTM_DEBUG_VERBOSE_INFO, "%s: %s%d. fmt %d, ch %d, srate %d\r\n", __func__, saiDirection[dir],
                        index, format, channels, srate);
@@ -885,32 +1056,22 @@ static srtm_status_t SRTM_SaiSdmaAdapter_SetParam(
         return SRTM_Status_InvalidState;
     }
 
-    if (format > SRTM_Audio_DSD32bits || channels >= ARRAY_SIZE(saiChannelMap))
+    if ((format > (uint8_t)SRTM_Audio_DSD32bits) || (channels >= ARRAY_SIZE(saiChannelMap)))
     {
         SRTM_DEBUG_MESSAGE(SRTM_DEBUG_VERBOSE_ERROR, "%s: %s unsupported format or channels %d, %d!\r\n", __func__,
                            saiDirection[dir], format, channels);
         return SRTM_Status_InvalidParameter;
     }
 
-    if (dir == SRTM_AudioDirTx && handle->txConfig.ReconfigSai != NULL)
-    {
-        handle->txConfig.ReconfigSai(adapter, dir, format, srate);
-    }
-    else
-    {
-        if (handle->rxConfig.ReconfigSai != NULL)
-        {
-            handle->rxConfig.ReconfigSai(adapter, dir, format, srate);
-        }
-    }
+    SRTM_SaiSdmaAdapter_ReconfigSAI(adapter, dir, format, srate);
 
-    if (format >= SRTM_Audio_DSD8bits && format <= SRTM_Audio_DSD32bits)
+    if (format >= (uint8_t)SRTM_Audio_DSD8bits)
     {
         /* DSD mode always two channels and get the sample frequcy to caculate the BCLK in the sai driver. */
-        rtm->srate    = srate / 2;
-        rtm->bitWidth = saiFormatMap[format - 45].bitwidth;
+        rtm->srate    = srate / 2U;
+        rtm->bitWidth = saiFormatMap[format - 45U].bitwidth;
     }
-    else if (format <= SRTM_Audio_Stereo32Bits)
+    else if (format <= (uint8_t)SRTM_Audio_Stereo32Bits)
     {
         rtm->srate    = srate;
         rtm->bitWidth = saiFormatMap[format].bitwidth;
@@ -920,8 +1081,13 @@ static srtm_status_t SRTM_SaiSdmaAdapter_SetParam(
         return SRTM_Status_Error;
     }
 
+    /* Caluate the max bytes can be done by each SDMA transfer. */
+    bytePerSample    = ((uint32_t)(rtm->bitWidth) >> 3U) * (channels != 0U ? (uint32_t)channels : 1UL);
+    rtm->maxXferSize = (uint32_t)SRTM_SDMA_MAX_TRANSFER_SIZE / bytePerSample * bytePerSample;
+
     rtm->format     = format;
     rtm->streamMode = saiChannelMap[channels];
+    rtm->paramSet   = true;
 
     return SRTM_Status_Success;
 }
@@ -934,12 +1100,13 @@ static srtm_status_t SRTM_SaiSdmaAdapter_SetBuf(srtm_sai_adapter_t adapter,
                                                 uint32_t periodSize,
                                                 uint32_t periodIdx)
 {
-    srtm_sai_sdma_adapter_t handle     = (srtm_sai_sdma_adapter_t)adapter;
+    srtm_sai_sdma_adapter_t handle     = (srtm_sai_sdma_adapter_t)(void *)adapter;
     srtm_sai_sdma_runtime_t rtm        = dir == SRTM_AudioDirTx ? &handle->txRtm : &handle->rxRtm;
     srtm_sai_sdma_buf_runtime_t bufRtm = &rtm->bufRtm;
 
     SRTM_DEBUG_MESSAGE(SRTM_DEBUG_VERBOSE_INFO, "%s: %s%d. buf [0x%x, 0x%x]; prd size 0x%x, idx %d\r\n", __func__,
                        saiDirection[dir], index, bufAddr, bufSize, periodSize, periodIdx);
+
     if (rtm->state != SRTM_AudioStateOpened)
     {
         SRTM_DEBUG_MESSAGE(SRTM_DEBUG_VERBOSE_ERROR, "%s: %s in wrong state %d!\r\n", __func__, saiDirection[dir],
@@ -949,15 +1116,18 @@ static srtm_status_t SRTM_SaiSdmaAdapter_SetBuf(srtm_sai_adapter_t adapter,
 
     rtm->bufAddr    = bufAddr;
     rtm->periodSize = periodSize;
-    rtm->periods    = periodSize ? bufSize / periodSize : 0;
+    rtm->periods    = (periodSize != 0U) ? bufSize / periodSize : 0U;
     rtm->bufSize    = periodSize * rtm->periods;
+
+    rtm->countsPerPeriod = (rtm->periodSize + rtm->maxXferSize - 1U) / rtm->maxXferSize;
+    rtm->curXferIdx      = 1U;
 
     assert(periodIdx < rtm->periods);
 
     bufRtm->chaseIdx = periodIdx;
     bufRtm->leadIdx  = periodIdx;
 
-    bufRtm->remainingPeriods = bufRtm->remainingLoadPeriods = 0;
+    bufRtm->remainingPeriods = bufRtm->remainingLoadPeriods = 0U;
 
     return SRTM_Status_Success;
 }
@@ -965,7 +1135,7 @@ static srtm_status_t SRTM_SaiSdmaAdapter_SetBuf(srtm_sai_adapter_t adapter,
 static srtm_status_t SRTM_SaiSdmaAdapter_Suspend(srtm_sai_adapter_t adapter, srtm_audio_dir_t dir, uint8_t index)
 {
     srtm_status_t status           = SRTM_Status_Success;
-    srtm_sai_sdma_adapter_t handle = (srtm_sai_sdma_adapter_t)adapter;
+    srtm_sai_sdma_adapter_t handle = (srtm_sai_sdma_adapter_t)(void *)adapter;
     srtm_sai_sdma_runtime_t thisRtm;
     srtm_sai_sdma_config_t *thisCfg;
 
@@ -982,10 +1152,13 @@ static srtm_status_t SRTM_SaiSdmaAdapter_Suspend(srtm_sai_adapter_t adapter, srt
         thisCfg = &handle->rxConfig;
     }
 
-    if (thisRtm->state == SRTM_AudioStateStarted && thisCfg->stopOnSuspend)
+    if ((thisRtm->state == SRTM_AudioStateStarted) && thisCfg->stopOnSuspend)
     {
-        status = SRTM_SaiSdmaAdapter_End(adapter, dir, index, false);
+        thisRtm->stoppedOnSuspend = true;
+        status                    = SRTM_SaiSdmaAdapter_End(adapter, dir, index, false);
     }
+
+    thisRtm->suspendState = SRTM_Suspended;
 
     return status;
 }
@@ -993,27 +1166,27 @@ static srtm_status_t SRTM_SaiSdmaAdapter_Suspend(srtm_sai_adapter_t adapter, srt
 static srtm_status_t SRTM_SaiSdmaAdapter_Resume(srtm_sai_adapter_t adapter, srtm_audio_dir_t dir, uint8_t index)
 {
     srtm_status_t status           = SRTM_Status_Success;
-    srtm_sai_sdma_adapter_t handle = (srtm_sai_sdma_adapter_t)adapter;
+    srtm_sai_sdma_adapter_t handle = (srtm_sai_sdma_adapter_t)(void *)adapter;
     srtm_sai_sdma_runtime_t thisRtm;
-    srtm_sai_sdma_config_t *thisCfg;
 
     SRTM_DEBUG_MESSAGE(SRTM_DEBUG_VERBOSE_INFO, "%s: %s%d\r\n", __func__, saiDirection[dir], index);
 
     if (dir == SRTM_AudioDirTx)
     {
         thisRtm = &handle->txRtm;
-        thisCfg = &handle->txConfig;
     }
     else
     {
         thisRtm = &handle->rxRtm;
-        thisCfg = &handle->rxConfig;
     }
 
-    if (thisRtm->state == SRTM_AudioStateOpened && thisCfg->stopOnSuspend)
+    if (thisRtm->stoppedOnSuspend)
     {
-        status = SRTM_SaiSdmaAdapter_Start(adapter, dir, index);
+        thisRtm->stoppedOnSuspend = false;
+        status                    = SRTM_SaiSdmaAdapter_Start(adapter, dir, index);
     }
+
+    thisRtm->suspendState = SRTM_NotSuspended;
 
     return status;
 }
@@ -1023,7 +1196,7 @@ static srtm_status_t SRTM_SaiSdmaAdapter_GetBufOffset(srtm_sai_adapter_t adapter
                                                       uint8_t index,
                                                       uint32_t *pOffset)
 {
-    srtm_sai_sdma_adapter_t handle = (srtm_sai_sdma_adapter_t)adapter;
+    srtm_sai_sdma_adapter_t handle = (srtm_sai_sdma_adapter_t)(void *)adapter;
     srtm_sai_sdma_runtime_t rtm    = dir == SRTM_AudioDirTx ? &handle->txRtm : &handle->rxRtm;
 
     SRTM_DEBUG_MESSAGE(SRTM_DEBUG_VERBOSE_INFO, "%s: %s%d\r\n", __func__, saiDirection[dir], index);
@@ -1039,7 +1212,7 @@ static srtm_status_t SRTM_SaiSdmaAdapter_PeriodReady(srtm_sai_adapter_t adapter,
                                                      uint32_t periodIdx)
 {
     srtm_status_t status           = SRTM_Status_Success;
-    srtm_sai_sdma_adapter_t handle = (srtm_sai_sdma_adapter_t)adapter;
+    srtm_sai_sdma_adapter_t handle = (srtm_sai_sdma_adapter_t)(void *)adapter;
     srtm_sai_sdma_runtime_t rtm    = dir == SRTM_AudioDirTx ? &handle->txRtm : &handle->rxRtm;
 
     SRTM_DEBUG_MESSAGE(SRTM_DEBUG_VERBOSE_INFO, "%s: %s%d - period %d\r\n", __func__, saiDirection[dir], index,
@@ -1071,33 +1244,29 @@ srtm_sai_adapter_t SRTM_SaiSdmaAdapter_Create(I2S_Type *sai,
 {
     srtm_sai_sdma_adapter_t handle;
 
-    assert(sai && dma);
+    assert((sai != NULL) && (dma != NULL));
 
     SRTM_DEBUG_MESSAGE(SRTM_DEBUG_VERBOSE_INFO, "%s\r\n", __func__);
 
     handle = (srtm_sai_sdma_adapter_t)SRTM_Heap_Malloc(sizeof(struct _srtm_sai_sdma_adapter));
-    assert(handle);
-    memset(handle, 0, sizeof(struct _srtm_sai_sdma_adapter));
+    assert(handle != NULL);
+    (void)memset(handle, 0, sizeof(struct _srtm_sai_sdma_adapter));
 
     handle->sai = sai;
     handle->dma = dma;
-    if (txConfig)
+    if (txConfig != NULL)
     {
-        memcpy(&handle->txConfig, txConfig, sizeof(srtm_sai_sdma_config_t));
+        (void)memcpy(&handle->txConfig, txConfig, sizeof(srtm_sai_sdma_config_t));
         handle->txRtm.proc = SRTM_Procedure_Create(SRTM_SaiSdmaAdapter_TxTransferProc, handle, NULL);
-        assert(handle->txRtm.proc);
+        assert(handle->txRtm.proc != NULL);
         SRTM_Message_SetFreeFunc(handle->txRtm.proc, SRTM_SaiSdmaAdapter_RecycleTxMessage, handle);
-        /* If not support DSD mode, the ReconfigSai pointer sould be set to NULL. */
-        handle->txConfig.ReconfigSai = SRTM_SaiSdmaAdapter_ReconfigSAI;
     }
-    if (rxConfig)
+    if (rxConfig != NULL)
     {
-        memcpy(&handle->rxConfig, rxConfig, sizeof(srtm_sai_sdma_config_t));
+        (void)memcpy(&handle->rxConfig, rxConfig, sizeof(srtm_sai_sdma_config_t));
         handle->rxRtm.proc = SRTM_Procedure_Create(SRTM_SaiSdmaAdapter_RxTransferProc, handle, NULL);
-        assert(handle->rxRtm.proc);
+        assert(handle->rxRtm.proc != NULL);
         SRTM_Message_SetFreeFunc(handle->rxRtm.proc, SRTM_SaiSdmaAdapter_RecycleRxMessage, handle);
-        /* If not support DSD mode, the ReconfigSai pointer should be set to NULL. */
-        handle->rxConfig.ReconfigSai = SRTM_SaiSdmaAdapter_ReconfigSAI;
     }
 
     /* Adapter interfaces. */
@@ -1119,19 +1288,19 @@ srtm_sai_adapter_t SRTM_SaiSdmaAdapter_Create(I2S_Type *sai,
 
 void SRTM_SaiSdmaAdapter_Destroy(srtm_sai_adapter_t adapter)
 {
-    srtm_sai_sdma_adapter_t handle = (srtm_sai_sdma_adapter_t)adapter;
+    srtm_sai_sdma_adapter_t handle = (srtm_sai_sdma_adapter_t)(void *)adapter;
 
-    assert(adapter);
+    assert(adapter != NULL);
 
     SRTM_DEBUG_MESSAGE(SRTM_DEBUG_VERBOSE_INFO, "%s\r\n", __func__);
 
-    if (handle->txRtm.proc)
+    if (handle->txRtm.proc != NULL)
     {
         SRTM_Message_SetFreeFunc(handle->txRtm.proc, NULL, NULL);
         SRTM_Procedure_Destroy(handle->txRtm.proc);
     }
 
-    if (handle->rxRtm.proc)
+    if (handle->rxRtm.proc != NULL)
     {
         SRTM_Message_SetFreeFunc(handle->rxRtm.proc, NULL, NULL);
         SRTM_Procedure_Destroy(handle->rxRtm.proc);
@@ -1142,19 +1311,59 @@ void SRTM_SaiSdmaAdapter_Destroy(srtm_sai_adapter_t adapter)
 
 void SRTM_SaiSdmaAdapter_SetTxLocalBuf(srtm_sai_adapter_t adapter, srtm_sai_sdma_local_buf_t *localBuf)
 {
-    srtm_sai_sdma_adapter_t handle = (srtm_sai_sdma_adapter_t)adapter;
+    srtm_sai_sdma_adapter_t handle = (srtm_sai_sdma_adapter_t)(void *)adapter;
 
-    assert(adapter);
+    assert(adapter != NULL);
 
     SRTM_DEBUG_MESSAGE(SRTM_DEBUG_VERBOSE_INFO, "%s\r\n", __func__);
 
-    if (localBuf)
+    if (localBuf != NULL)
     {
         assert(localBuf->periods <= SRTM_SAI_SDMA_MAX_LOCAL_BUF_PERIODS);
-        memcpy(&handle->txRtm.localBuf, localBuf, sizeof(srtm_sai_sdma_local_buf_t));
+        (void)memcpy(&handle->txRtm.localBuf, localBuf, sizeof(srtm_sai_sdma_local_buf_t));
     }
     else
     {
         handle->txRtm.localBuf.buf = NULL;
+    }
+}
+
+void SRTM_SaiSdmaAdapter_SetDataHandlerOnHostSuspend(srtm_sai_adapter_t adapter,
+                                                     srtm_sai_sdma_data_callback_t cb,
+                                                     void *param)
+{
+    srtm_sai_sdma_adapter_t handle = (srtm_sai_sdma_adapter_t)(void *)adapter;
+
+    assert(adapter != NULL);
+
+    SRTM_DEBUG_MESSAGE(SRTM_DEBUG_VERBOSE_INFO, "%s\r\n", __func__);
+
+    handle->rxRtm.dataCallback      = cb;
+    handle->rxRtm.dataCallbackParam = param;
+}
+
+static void SRTM_SaiSdmaAdapter_ResumeHostProc(srtm_dispatcher_t dispatcher, void *param1, void *param2)
+{
+    srtm_sai_sdma_adapter_t handle = (srtm_sai_sdma_adapter_t)param1;
+
+    if (handle->rxRtm.suspendState == SRTM_Suspended)
+    {
+        handle->rxRtm.suspendState = SRTM_WakingUp;
+    }
+}
+
+void SRTM_SaiSdmaAdapter_ResumeHost(srtm_sai_adapter_t adapter)
+{
+    srtm_sai_sdma_adapter_t handle = (srtm_sai_sdma_adapter_t)(void *)adapter;
+    srtm_procedure_t proc;
+
+    assert(adapter != NULL);
+
+    SRTM_DEBUG_MESSAGE(SRTM_DEBUG_VERBOSE_INFO, "%s\r\n", __func__);
+
+    proc = SRTM_Procedure_Create(SRTM_SaiSdmaAdapter_ResumeHostProc, handle, NULL);
+    if ((adapter->service != NULL) && (proc != NULL))
+    {
+        (void)SRTM_Dispatcher_PostProc(adapter->service->dispatcher, proc);
     }
 }

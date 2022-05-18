@@ -19,8 +19,8 @@ Other hook types used for RTOS and resource statistics are also demonstrated in 
 
 Toolchain supported
 ===================
-- IAR embedded Workbench  8.32.3
-- GCC ARM Embedded  8.2.1
+- IAR embedded Workbench  9.10.2
+- GCC ARM Embedded  10.2.1
 
 Hardware requirements
 =====================
@@ -71,6 +71,3 @@ Event task is running.
 Receive message counter: 13.
 Receive message counter: 14.
 ...
-Customization options
-=====================
-

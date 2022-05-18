@@ -10,25 +10,28 @@
 #define _FSL_CODEC_COMMON_H_
 
 #include "fsl_common.h"
+#include "fsl_codec_adapter.h"
+
+/*!
+ * @addtogroup codec_common
+ * @{
+ */
 /*******************************************************************************
  * Definitions
  ******************************************************************************/
 /*! @name Driver version */
 /*@{*/
-/*! @brief CLOCK driver version 2.1.0. */
-#define FSL_CODEC_DRIVER_VERSION (MAKE_VERSION(2, 1, 0))
+/*! @brief CLOCK driver version 2.3.0. */
+#define FSL_CODEC_DRIVER_VERSION (MAKE_VERSION(2, 3, 0))
 /*@}*/
-
-/*! @brief CODEC handle buffer size */
-#ifndef CODEC_HANDLE_SIZE
-#define CODEC_HANDLE_SIZE (128U)
-#endif
 
 /*! @brief codec maximum volume range */
 #define CODEC_VOLUME_MAX_VALUE (100U)
 
-/*! @brief CODEC status */
-enum _codec_status
+/*! @brief CODEC status
+ * @anchor _codec_status
+ */
+enum
 {
     kStatus_CODEC_NotSupport          = MAKE_STATUS(kStatusGroup_CODEC, 0U), /*!< CODEC not support status */
     kStatus_CODEC_DeviceNotRegistered = MAKE_STATUS(kStatusGroup_CODEC, 1U), /*!< CODEC device register failed status */
@@ -49,8 +52,10 @@ typedef enum _codec_audio_protocol
     kCODEC_BusTDM            = 5U, /*!< TDM mode */
 } codec_audio_protocol_t;
 
-/*! @brief audio sample rate definition */
-enum _codec_audio_sample_rate
+/*! @brief audio sample rate definition
+ * @anchor _codec_audio_sample_rate
+ */
+enum
 {
     kCODEC_AudioSampleRate8KHz    = 8000U,   /*!< Sample rate 8000 Hz */
     kCODEC_AudioSampleRate11025Hz = 11025U,  /*!< Sample rate 11025 Hz */
@@ -66,8 +71,10 @@ enum _codec_audio_sample_rate
     kCODEC_AudioSampleRate384KHz  = 384000U, /*!< Sample rate 384000 Hz */
 };
 
-/*! @brief audio bit width */
-enum _codec_audio_bit_width
+/*! @brief audio bit width
+ * @anchor _codec_audio_bit_width
+ */
+enum
 {
     kCODEC_AudioBitWidth16bit = 16U, /*!< audio bit width 16 */
     kCODEC_AudioBitWidth20bit = 20U, /*!< audio bit width 20 */
@@ -90,7 +97,7 @@ typedef enum _codec_module
     kCODEC_ModuleMic       = 9U,  /*!< codec module MIC */
     kCODEC_ModuleI2SIn     = 10U, /*!< codec module I2S in */
     kCODEC_ModuleI2SOut    = 11U, /*!< codec module I2S out */
-    kCODEC_ModuleMxier     = 12U, /*!< codec module mixer */
+    kCODEC_ModuleMixer     = 12U, /*!< codec module mixer */
 } codec_module_t;
 
 /*! @brief audio codec module control cmd */
@@ -99,15 +106,19 @@ typedef enum _codec_module_ctrl_cmd
     kCODEC_ModuleSwitchI2SInInterface = 0U, /*!< module digital interface siwtch. */
 } codec_module_ctrl_cmd_t;
 
-/*! @brief audio codec module digital interface */
-enum _codec_module_ctrl_i2s_in_interface
+/*! @brief audio codec module digital interface
+ * @anchor _codec_module_ctrl_i2s_in_interface
+ */
+enum
 {
     kCODEC_ModuleI2SInInterfacePCM = 0U, /*!< Pcm interface*/
     kCODEC_ModuleI2SInInterfaceDSD = 1U, /*!< DSD interface */
 };
 
-/*! @brief audio codec module record source value */
-enum _codec_record_source
+/*! @brief audio codec module record source value
+ * @anchor _codec_record_source
+ */
+enum
 {
     kCODEC_RecordSourceDifferentialLine = 1U,  /*!< record source from differential line */
     kCODEC_RecordSourceLineInput        = 2U,  /*!< record source from line input */
@@ -116,8 +127,10 @@ enum _codec_record_source
     kCODEC_RecordSourceSingleEndMic     = 16U, /*!< record source from single microphone */
 };
 
-/*! @brief audio codec record channel */
-enum _codec_reocrd_channel
+/*! @brief audio codec record channel
+ * @anchor _codec_reocrd_channel
+ */
+enum
 {
     kCODEC_RecordChannelLeft1                 = 1U,  /*!< left record channel 1 */
     kCODEC_RecordChannelLeft2                 = 2U,  /*!< left record channel 2 */
@@ -133,8 +146,10 @@ enum _codec_reocrd_channel
     kCODEC_RecordChannelDifferentialNegative3 = 32U, /*!< differential negative record channel 3 */
 };
 
-/*! @brief audio codec module play source value */
-enum _codec_play_source
+/*! @brief audio codec module play source value
+ * @anchor _codec_play_source
+ */
+enum
 {
     kCODEC_PlaySourcePGA          = 1U, /*!< play source PGA, bypass ADC */
     kCODEC_PlaySourceInput        = 2U, /*!< play source Input3 */
@@ -145,8 +160,10 @@ enum _codec_play_source
     kCODEC_PlaySourceAux          = 8U, /*!< play source mixer in AUx */
 };
 
-/*! @brief codec play channel */
-enum _codec_play_channel
+/*! @brief codec play channel
+ * @anchor _codec_play_channel
+ */
+enum
 {
     kCODEC_PlayChannelHeadphoneLeft  = 1U,  /*!< play channel headphone left */
     kCODEC_PlayChannelHeadphoneRight = 2U,  /*!< play channel headphone right */
@@ -165,8 +182,34 @@ enum _codec_play_channel
     kCODEC_PlayChannelRight3 = 128U, /*!< play channel right3 */
 };
 
-/*! @brief audio codec capability */
-enum _codec_capability_flag
+/*! @brief codec volume setting
+ * @anchor _codec_volume_capability
+ */
+enum
+{
+    kCODEC_VolumeHeadphoneLeft  = 1U,  /*!< headphone left volume */
+    kCODEC_VolumeHeadphoneRight = 2U,  /*!< headphone right volume */
+    kCODEC_VolumeSpeakerLeft    = 4U,  /*!< speaker left volume */
+    kCODEC_VolumeSpeakerRight   = 8U,  /*!< speaker right volume */
+    kCODEC_VolumeLineOutLeft    = 16U, /*!< lineout left volume */
+    kCODEC_VolumeLineOutRight   = 32U, /*!< lineout right volume */
+
+    kCODEC_VolumeLeft0  = 1UL << 0U, /*!< left0 volume */
+    kCODEC_VolumeRight0 = 1UL << 1U, /*!< right0 volume */
+    kCODEC_VolumeLeft1  = 1UL << 2U, /*!< left1 volume */
+    kCODEC_VolumeRight1 = 1UL << 3U, /*!< right1 volume */
+    kCODEC_VolumeLeft2  = 1UL << 4U, /*!< left2 volume */
+    kCODEC_VolumeRight2 = 1UL << 5U, /*!< right2 volume */
+    kCODEC_VolumeLeft3  = 1UL << 6U, /*!< left3 volume */
+    kCODEC_VolumeRight3 = 1UL << 7U, /*!< right3 volume */
+
+    kCODEC_VolumeDAC = 1UL << 8U, /*!< dac volume */
+};
+
+/*! @brief audio codec capability
+ * @anchor _codec_capability_flag
+ */
+enum
 {
     kCODEC_SupportModuleADC                  = 1U << 0U,  /*!< codec capability of module ADC */
     kCODEC_SupportModuleDAC                  = 1U << 1U,  /*!< codec capability of module DAC */
@@ -214,7 +257,7 @@ enum _codec_capability_flag
 };
 
 /*!@brief codec handle declaration */
-typedef struct codec_handle codec_handle_t;
+typedef struct _codec_handle codec_handle_t;
 
 /*! @brief Initialize structure of the codec */
 typedef struct _codec_config
@@ -229,6 +272,7 @@ typedef struct _codec_capability
     uint32_t codecModuleCapability; /*!< codec module capability */
     uint32_t codecPlayCapability;   /*!< codec play capability */
     uint32_t codecRecordCapability; /*!< codec record capability */
+    uint32_t codecVolumeCapability; /*!< codec volume capability */
 } codec_capability_t;
 
 /*! @brief Codec handle definition.
@@ -236,11 +280,11 @@ typedef struct _codec_capability
  * uint8_t codecHandleBuffer[CODEC_HANDLE_SIZE];
  * codec_handle_t *codecHandle = codecHandleBuffer;
  */
-struct codec_handle
+struct _codec_handle
 {
-    codec_config_t *codecConfig;        /*!< codec configuration function pointer */
-    codec_capability_t codecCapability; /*!< codec capability */
-    void *codecDevHandle;               /*!< codec device handle */
+    codec_config_t *codecConfig;                    /*!< codec configuration function pointer */
+    const codec_capability_t *codecCapability;      /*!< codec capability */
+    uint8_t codecDevHandle[HAL_CODEC_HANDLER_SIZE]; /*!< codec device handle */
 };
 
 /*******************************************************************************
@@ -297,7 +341,8 @@ status_t CODEC_ModuleControl(codec_handle_t *handle, codec_module_ctrl_cmd_t cmd
  * @brief set audio codec pl volume.
  *
  * @param handle codec handle.
- * @param channel audio codec play channel, can be a value or combine value of _codec_play_channel.
+ * @param channel audio codec volume channel, can be a value or combine value of _codec_volume_capability or
+ * _codec_play_channel.
  * @param volume volume value, support 0 ~ 100, 0 is mute, 100 is the maximum volume value.
  * @return kStatus_Success is success, else configure failed.
  */
@@ -307,7 +352,8 @@ status_t CODEC_SetVolume(codec_handle_t *handle, uint32_t channel, uint32_t volu
  * @brief set audio codec module mute.
  *
  * @param handle codec handle.
- * @param channel audio codec play channel, can be a value or combine value of _codec_play_channel.
+ * @param channel audio codec volume channel, can be a value or combine value of _codec_volume_capability or
+ * _codec_play_channel.
  * @param mute true is mute, false is unmute.
  * @return kStatus_Success is success, else configure failed.
  */
@@ -327,11 +373,11 @@ status_t CODEC_SetPower(codec_handle_t *handle, codec_module_t module, bool powe
  * @brief codec set record source.
  *
  * @param handle codec handle.
- * @param source audio codec record source, can be a value or combine value of _codec_record_source.
+ * @param recordSource audio codec record source, can be a value or combine value of _codec_record_source.
  *
  * @return kStatus_Success is success, else configure failed.
  */
-status_t CODEC_SetRecord(codec_handle_t *handle, uint32_t recordRource);
+status_t CODEC_SetRecord(codec_handle_t *handle, uint32_t recordSource);
 
 /*!
  * @brief codec set record channel.
@@ -359,5 +405,6 @@ status_t CODEC_SetPlay(codec_handle_t *handle, uint32_t playSource);
 #if defined(__cplusplus)
 }
 #endif
+/*! @} */
 
 #endif /* _FSL_CODEC_COMMON_H_ */

@@ -11,8 +11,8 @@ characters.
 
 Toolchain supported
 ===================
-- IAR embedded Workbench  8.32.3
-- GCC ARM Embedded  8.2.1
+- IAR embedded Workbench  9.10.2
+- GCC ARM Embedded  10.2.1
 
 Hardware requirements
 =====================
@@ -51,7 +51,4 @@ Uart will generate the idle line detect interrupt, SDMA receive operation will b
 Board will send the received characters out.
 Now please input:
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-
-Customization options
-=====================
 

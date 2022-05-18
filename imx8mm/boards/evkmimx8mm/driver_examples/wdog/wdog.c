@@ -7,17 +7,17 @@
  */
 
 #include "fsl_debug_console.h"
+#include "pin_mux.h"
+#include "clock_config.h"
 #include "board.h"
 
 #include "fsl_wdog.h"
 
-#include "pin_mux.h"
-#include "clock_config.h"
 /*******************************************************************************
  * Definitions
  ******************************************************************************/
-#define DEMO_WDOG_BASE WDOG1
-#define DEMO_WDOG_IRQHandler WDOG1_IRQHandler
+#define DEMO_WDOG_BASE       WDOG3
+#define DEMO_WDOG_IRQHandler WDOG3_IRQHandler
 
 #define EXAMPLE_DISABLE_WDOG_RESET_FUNCTION (1)
 
@@ -60,7 +60,7 @@ int main(void)
     /* Board specific RDC settings */
     BOARD_RdcInit();
 
-    BOARD_InitPins();
+    BOARD_InitBootPins();
     BOARD_BootClockRUN();
     BOARD_InitDebugConsole();
     BOARD_InitMemory();
@@ -110,7 +110,7 @@ int main(void)
          * wdogConfig->interruptTimeValue = 0x04u;
          */
         WDOG_GetDefaultConfig(&config);
-        config.timeoutValue = 0xFU; /* Timeout value is 2.5 sec. */
+        config.timeoutValue = 0xFU; /* Timeout value is (0xF + 1)/2 = 8 sec. */
         WDOG_Init(DEMO_WDOG_BASE, &config);
         PRINTF("--- wdog Init done---\r\n");
 
@@ -137,9 +137,9 @@ int main(void)
          * wdogConfig->interruptTimeValue = 0x04u;
          */
         WDOG_GetDefaultConfig(&config);
-        config.timeoutValue       = 0xFU; /* Timeout value is 8 sec. */
+        config.timeoutValue       = 0xFU; /* Timeout value is (0xF+1)/2 = 8 sec. */
         config.enableInterrupt    = true;
-        config.interruptTimeValue = 0x4U; /* Interrupt occurred 2 sec before WDOG timeout. */
+        config.interruptTimeValue = 0x4U; /* Interrupt occurred (0x4)/2 = 2 sec before WDOG timeout. */
         WDOG_Init(DEMO_WDOG_BASE, &config);
 
         PRINTF("--- wdog Init done---\r\n");

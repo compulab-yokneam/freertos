@@ -1,10 +1,11 @@
 /*
  * Copyright (c) 2018, Freescale Semiconductor, Inc.
+ * Copyright 2019 - 2020, NXP
  * All rights reserved.
- *
  *
  * SPDX-License-Identifier: BSD-3-Clause
  */
+
 #ifndef _FSL_PDM_SDMA_H_
 #define _FSL_PDM_SDMA_H_
 
@@ -12,7 +13,8 @@
 #include "fsl_sdma.h"
 
 /*!
- * @addtogroup pdm_sdma
+ * @addtogroup pdm_sdma PDM SDMA Driver
+ * @ingroup pdm
  * @{
  */
 
@@ -22,7 +24,7 @@
 
 /*! @name Driver version */
 /*@{*/
-#define FSL_PDM_SDMA_DRIVER_VERSION (MAKE_VERSION(2, 1, 1)) /*!< Version 2.1.1 */
+#define FSL_PDM_SDMA_DRIVER_VERSION (MAKE_VERSION(2, 6, 0)) /*!< Version 2.6.0 */
 /*@}*/
 
 typedef struct _pdm_sdma_handle pdm_sdma_handle_t;
@@ -38,7 +40,7 @@ struct _pdm_sdma_handle
     uint8_t fifoWidth;            /*!< fifo width */
     uint8_t endChannel;           /*!< The last enabled channel */
     uint8_t channelNums;          /*!< total channel numbers */
-    uint8_t count;                /*!< The transfer data count in a DMA request */
+    uint32_t count;               /*!< The transfer data count in a DMA request */
     uint32_t state;               /*!< Internal state for PDM eDMA transfer */
     uint32_t eventSource;         /*!< PDM event source number */
     pdm_sdma_callback_t callback; /*!< Callback for users while transfer finish or error occurs */
@@ -70,11 +72,10 @@ extern "C" {
  *
  * @param base PDM base pointer.
  * @param handle PDM eDMA handle pointer.
- * @param base PDM peripheral base address.
  * @param callback Pointer to user callback function.
  * @param userData User parameter passed to the callback function.
  * @param dmaHandle eDMA handle pointer, this handle shall be static allocated by users.
- * @param dma request source.
+ * @param eventSource PDM event source number.
  */
 void PDM_TransferCreateHandleSDMA(PDM_Type *base,
                                   pdm_sdma_handle_t *handle,

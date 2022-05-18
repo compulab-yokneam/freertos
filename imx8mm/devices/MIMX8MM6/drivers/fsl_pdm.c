@@ -1,7 +1,7 @@
 /*
  * Copyright (c) 2018, Freescale Semiconductor, Inc.
+ * Copyright 2019-2020 NXP
  * All rights reserved.
- *
  *
  * SPDX-License-Identifier: BSD-3-Clause
  */
@@ -23,13 +23,6 @@ typedef void (*pdm_isr_t)(PDM_Type *base, pdm_handle_t *pdmHandle);
 /*!
  * @brief Get the instance number for PDM.
  *
- * @param base PDM base pointer.
- */
-uint32_t PDM_GetInstance(PDM_Type *base);
-
-/*!
- * @brief Get the instance number for PDM.
- *
  * @param channelMask enabled channel.
  * @param qualitymode selected quality mode.
  * @param osr      oversample rate.
@@ -46,11 +39,19 @@ static status_t PDM_ValidateSrcClockRate(uint32_t channelMask,
 /* Base pointer array */
 static PDM_Type *const s_pdmBases[] = PDM_BASE_PTRS;
 /*!@brief PDM handle pointer */
-pdm_handle_t *s_pdmHandle[ARRAY_SIZE(s_pdmBases)];
+static pdm_handle_t *s_pdmHandle[ARRAY_SIZE(s_pdmBases)];
 #if !(defined(FSL_SDK_DISABLE_DRIVER_CLOCK_CONTROL) && FSL_SDK_DISABLE_DRIVER_CLOCK_CONTROL)
 /* Clock name array */
 static const clock_ip_name_t s_pdmClock[] = PDM_CLOCKS;
 #endif /* FSL_SDK_DISABLE_DRIVER_CLOCK_CONTROL */
+
+#if !(defined(FSL_SDK_DISABLE_DRIVER_CLOCK_CONTROL) && FSL_SDK_DISABLE_DRIVER_CLOCK_CONTROL)
+#if defined(FSL_PDM_HAS_FILTER_CLOCK_GATE) && FSL_PDM_HAS_FILTER_CLOCK_GATE
+/* Clock name array */
+static const clock_ip_name_t s_pdmFilterClock[] = PDM_FILTER_CLOCKS;
+#endif
+#endif /* FSL_SDK_DISABLE_DRIVER_CLOCK_CONTROL */
+
 /*! @brief Pointer to tx IRQ handler for each instance. */
 static pdm_isr_t s_pdmIsr;
 /*******************************************************************************
@@ -75,7 +76,40 @@ uint32_t PDM_GetInstance(PDM_Type *base)
 }
 
 /*!
- * brief PDM read data non blocking.
+ * brief PDM read fifo.
+ * Note: This function support 16 bit only for IP version that only supports 16bit.
+ *
+ * param base PDM base pointer.
+ * param startChannel start channel number.
+ * param channelNums total enabled channelnums.
+ * param buffer received buffer address.
+ * param size number of samples to read.
+ * param dataWidth sample width.
+ */
+void PDM_ReadFifo(
+    PDM_Type *base, uint32_t startChannel, uint32_t channelNums, void *buffer, size_t size, uint32_t dataWidth)
+{
+    uint32_t i = 0, j = 0U;
+    uint32_t *dataAddr = (uint32_t *)buffer;
+
+    for (i = 0U; i < size; i++)
+    {
+        for (j = 0; j < channelNums; j++)
+        {
+#if defined(FSL_FEATURE_PDM_FIFO_WIDTH) && (FSL_FEATURE_PDM_FIFO_WIDTH != 2U)
+            *dataAddr = base->DATACH[startChannel + j] >> (dataWidth == 4U ? 0U : 8U);
+            dataAddr  = (uint32_t *)((uint32_t)dataAddr + dataWidth);
+#else
+            *dataAddr = base->DATACH[startChannel + j];
+            dataAddr  = (uint32_t *)((uint32_t)dataAddr + 2U);
+#endif
+        }
+    }
+}
+
+#if defined(FSL_FEATURE_PDM_FIFO_WIDTH) && (FSL_FEATURE_PDM_FIFO_WIDTH == 2U)
+/*!
+ * brief PDM read data non blocking, only support 16bit data read.
  * So the actually read data byte size in this function is (size * 2 * channelNums).
  * param base PDM base pointer.
  * param startChannel start channel number.
@@ -86,16 +120,16 @@ uint32_t PDM_GetInstance(PDM_Type *base)
 void PDM_ReadNonBlocking(PDM_Type *base, uint32_t startChannel, uint32_t channelNums, int16_t *buffer, size_t size)
 {
     uint32_t i = 0, j = 0U;
-    uint32_t *startSrcAddr = (uint32_t *)(&base->DATACH)[startChannel];
 
     for (i = 0U; i < size; i++)
     {
         for (j = 0; j < channelNums; j++)
         {
-            *buffer++ = startSrcAddr[j];
+            *buffer++ = (int16_t)base->DATACH[startChannel + j];
         }
     }
 }
+#endif
 
 static status_t PDM_ValidateSrcClockRate(uint32_t channelMask,
                                          pdm_df_quality_mode_t qualityMode,
@@ -104,9 +138,9 @@ static status_t PDM_ValidateSrcClockRate(uint32_t channelMask,
 {
     uint32_t enabledChannel = 0U, i = 0U, factor = 0U;
 
-    for (i = 0U; i < FSL_FEATURE_PDM_CHANNEL_NUM; i++)
+    for (i = 0U; i < (uint32_t)FSL_FEATURE_PDM_CHANNEL_NUM; i++)
     {
-        if (channelMask >> i)
+        if (channelMask >> i != 0U)
         {
             enabledChannel++;
         }
@@ -132,12 +166,87 @@ static status_t PDM_ValidateSrcClockRate(uint32_t channelMask,
 /*!
  * brief PDM set sample rate.
  *
+ * note This function is depend on the configuration of the PDM and PDM channel, so the correct call sequence is
+ * code
+ * PDM_Init(base, pdmConfig)
+ * PDM_SetChannelConfig(base, channel, &channelConfig)
+ * PDM_SetSampleRateConfig(base, source, sampleRate)
+ * endcode
+ * param base PDM base pointer
+ * param sourceClock_HZ PDM source clock frequency.
+ * param sampleRate_HZ PDM sample rate.
+ */
+status_t PDM_SetSampleRateConfig(PDM_Type *base, uint32_t sourceClock_HZ, uint32_t sampleRate_HZ)
+{
+    uint32_t osr = (base->CTRL_2 & PDM_CTRL_2_CICOSR_MASK) >> PDM_CTRL_2_CICOSR_SHIFT;
+    pdm_df_quality_mode_t qualityMode =
+        (pdm_df_quality_mode_t)(uint32_t)((base->CTRL_2 & PDM_CTRL_2_QSEL_MASK) >> PDM_CTRL_2_QSEL_SHIFT);
+
+    uint32_t pdmClockRate       = 0U;
+    uint32_t enabledChannelMask = base->CTRL_1 & (uint32_t)kPDM_EnableChannelAll, regDiv = 0U;
+
+    switch (qualityMode)
+    {
+        case kPDM_QualityModeHigh:
+            osr          = 16U - osr;
+            pdmClockRate = sampleRate_HZ * osr * 8U;
+            break;
+
+        case kPDM_QualityModeMedium:
+            osr          = 16U - osr;
+            pdmClockRate = sampleRate_HZ * osr * 4U;
+            break;
+
+        case kPDM_QualityModeLow:
+            osr          = 16U - osr;
+            pdmClockRate = sampleRate_HZ * osr * 2U;
+            break;
+
+        case kPDM_QualityModeVeryLow0:
+            osr          = 16U - osr;
+            pdmClockRate = sampleRate_HZ * osr * 4U;
+            break;
+
+        case kPDM_QualityModeVeryLow1:
+            osr          = 16U - osr;
+            pdmClockRate = sampleRate_HZ * osr * 2U;
+            break;
+        case kPDM_QualityModeVeryLow2:
+            osr          = 16U - osr;
+            pdmClockRate = sampleRate_HZ * osr;
+            break;
+        default:
+            assert(false);
+            break;
+    }
+
+    /* get divider */
+    regDiv = sourceClock_HZ / pdmClockRate;
+
+    if (regDiv > PDM_CTRL_2_CLKDIV_MASK)
+    {
+        return kStatus_Fail;
+    }
+
+    if (PDM_ValidateSrcClockRate(enabledChannelMask, qualityMode, (uint8_t)osr, regDiv) == kStatus_Fail)
+    {
+        return kStatus_Fail;
+    }
+
+    base->CTRL_2 = (base->CTRL_2 & (~PDM_CTRL_2_CLKDIV_MASK)) | PDM_CTRL_2_CLKDIV(regDiv);
+
+    return kStatus_Success;
+}
+
+/*!
+ * brief PDM set sample rate.
+ *
+ * deprecated Do not use this function.  It has been superceded by @ref PDM_SetSampleRateConfig
  * param base PDM base pointer
  * param enableChannelMask PDM channel enable mask.
  * param qualityMode quality mode.
  * param osr cic oversample rate
  * param clkDiv clock divider
- * after completing the current frame in debug mode.
  */
 status_t PDM_SetSampleRate(
     PDM_Type *base, uint32_t enableChannelMask, pdm_df_quality_mode_t qualityMode, uint8_t osr, uint32_t clkDiv)
@@ -158,6 +267,7 @@ status_t PDM_SetSampleRate(
             regDiv >>= 2U;
             break;
         default:
+            assert(false);
             break;
     }
 
@@ -194,13 +304,17 @@ void PDM_Init(PDM_Type *base, const pdm_config_t *config)
 #if !(defined(FSL_SDK_DISABLE_DRIVER_CLOCK_CONTROL) && FSL_SDK_DISABLE_DRIVER_CLOCK_CONTROL)
     /* Enable the PDM clock */
     CLOCK_EnableClock(s_pdmClock[PDM_GetInstance(base)]);
+#if defined(FSL_PDM_HAS_FILTER_CLOCK_GATE) && FSL_PDM_HAS_FILTER_CLOCK_GATE
+    CLOCK_EnableClock(s_pdmFilterClock[PDM_GetInstance(base)]);
+#endif
 #endif /* FSL_SDK_DISABLE_DRIVER_CLOCK_CONTROL */
 
     /* Enable the module and disable the interface/all channel */
-    base->CTRL_1 &= ~(PDM_CTRL_1_MDIS_MASK | PDM_CTRL_1_PDMIEN_MASK | PDM_CTRL_1_ERREN_MASK | kPDM_EnableChannelAll);
+    base->CTRL_1 &=
+        ~(PDM_CTRL_1_MDIS_MASK | PDM_CTRL_1_PDMIEN_MASK | PDM_CTRL_1_ERREN_MASK | (uint32_t)kPDM_EnableChannelAll);
 
     /* wait all filter stopped */
-    while (base->STAT & PDM_STAT_BSY_FIL_MASK)
+    while ((base->STAT & PDM_STAT_BSY_FIL_MASK) != 0U)
     {
     }
 
@@ -232,6 +346,9 @@ void PDM_Deinit(PDM_Type *base)
 
 #if !(defined(FSL_SDK_DISABLE_DRIVER_CLOCK_CONTROL) && FSL_SDK_DISABLE_DRIVER_CLOCK_CONTROL)
     CLOCK_DisableClock(s_pdmClock[PDM_GetInstance(base)]);
+#if defined(FSL_PDM_HAS_FILTER_CLOCK_GATE) && FSL_PDM_HAS_FILTER_CLOCK_GATE
+    CLOCK_DisableClock(s_pdmFilterClock[PDM_GetInstance(base)]);
+#endif
 #endif /* FSL_SDK_DISABLE_DRIVER_CLOCK_CONTROL */
 }
 
@@ -246,13 +363,13 @@ void PDM_Deinit(PDM_Type *base)
  */
 void PDM_EnableInterrupts(PDM_Type *base, uint32_t mask)
 {
-    if (mask & kPDM_FIFOInterruptEnable)
+    if ((mask & (uint32_t)kPDM_FIFOInterruptEnable) != 0U)
     {
-        base->CTRL_1 = (base->CTRL_1 & (~PDM_CTRL_1_DISEL_MASK)) | kPDM_FIFOInterruptEnable;
+        base->CTRL_1 = (base->CTRL_1 & (~PDM_CTRL_1_DISEL_MASK)) | (uint32_t)kPDM_FIFOInterruptEnable;
     }
-    if (mask & kPDM_ErrorInterruptEnable)
+    if ((mask & (uint32_t)kPDM_ErrorInterruptEnable) != 0U)
     {
-        base->CTRL_1 = (base->CTRL_1 & (~PDM_CTRL_1_ERREN_MASK)) | kPDM_ErrorInterruptEnable;
+        base->CTRL_1 = (base->CTRL_1 & (~PDM_CTRL_1_ERREN_MASK)) | (uint32_t)kPDM_ErrorInterruptEnable;
     }
 }
 
@@ -267,22 +384,80 @@ void PDM_EnableInterrupts(PDM_Type *base, uint32_t mask)
 void PDM_SetChannelConfig(PDM_Type *base, uint32_t channel, const pdm_channel_config_t *config)
 {
     assert(config != NULL);
-    assert(channel <= FSL_FEATURE_PDM_CHANNEL_NUM);
+    assert(channel <= (uint32_t)FSL_FEATURE_PDM_CHANNEL_NUM);
 
-    uint32_t dcCtrl  = base->DC_CTRL;
+    uint32_t dcCtrl = 0U;
+
+#if defined(FSL_FEATURE_PDM_HAS_RANGE_CTRL) && FSL_FEATURE_PDM_HAS_RANGE_CTRL
+    uint32_t outCtrl = base->RANGE_CTRL;
+#else
     uint32_t outCtrl = base->OUT_CTRL;
+#endif
 
+#if (defined(FSL_FEATURE_PDM_HAS_DC_OUT_CTRL) && (FSL_FEATURE_PDM_HAS_DC_OUT_CTRL))
+    dcCtrl = base->DC_OUT_CTRL;
     /* configure gain and cut off freq */
-    dcCtrl &= ~(PDM_DC_CTRL_DCCONFIG0_MASK << (channel << 1U));
+    dcCtrl &= ~((uint32_t)PDM_DC_OUT_CTRL_DCCONFIG0_MASK << (channel << 1U));
+    dcCtrl |= (uint32_t)config->outputCutOffFreq << (channel << 1U);
+    base->DC_OUT_CTRL = dcCtrl;
+#endif
+
+#if !(defined(FSL_FEATURE_PDM_DC_CTRL_VALUE_FIXED) && (FSL_FEATURE_PDM_DC_CTRL_VALUE_FIXED))
+    dcCtrl = base->DC_CTRL;
+    /* configure gain and cut off freq */
+    dcCtrl &= ~((uint32_t)PDM_DC_CTRL_DCCONFIG0_MASK << (channel << 1U));
     dcCtrl |= (uint32_t)config->cutOffFreq << (channel << 1U);
+    base->DC_CTRL = dcCtrl;
+#endif
+
+#if defined(FSL_FEATURE_PDM_HAS_RANGE_CTRL) && FSL_FEATURE_PDM_HAS_RANGE_CTRL
+    outCtrl &= ~((uint32_t)PDM_RANGE_CTRL_RANGEADJ0_MASK << (channel << 2U));
+#else
     outCtrl &= ~((uint32_t)PDM_OUT_CTRL_OUTGAIN0_MASK << (channel << 2U));
+#endif
+
     outCtrl |= (uint32_t)config->gain << (channel << 2U);
 
-    base->DC_CTRL  = dcCtrl;
+#if defined(FSL_FEATURE_PDM_HAS_RANGE_CTRL) && FSL_FEATURE_PDM_HAS_RANGE_CTRL
+    base->RANGE_CTRL = outCtrl;
+#else
     base->OUT_CTRL = outCtrl;
-
+#endif
     /* enable channel */
-    base->CTRL_1 |= 1U << channel;
+    base->CTRL_1 |= 1UL << channel;
+}
+
+/*!
+ * brief PDM set channel transfer config.
+ *
+ * param base PDM base pointer.
+ * param handle PDM handle pointer.
+ * param channel PDM channel.
+ * param config channel config.
+ * param format data format.
+ */
+status_t PDM_TransferSetChannelConfig(
+    PDM_Type *base, pdm_handle_t *handle, uint32_t channel, const pdm_channel_config_t *config, uint32_t format)
+{
+    assert(handle != NULL);
+
+    PDM_SetChannelConfig(base, channel, config);
+
+    handle->format = format;
+
+    if (handle->channelNums == 0U)
+    {
+        handle->startChannel = (uint8_t)channel;
+    }
+
+    handle->channelNums++;
+
+    if (handle->channelNums > (uint8_t)FSL_FEATURE_PDM_CHANNEL_NUM)
+    {
+        return kStatus_PDM_ChannelConfig_Failed;
+    }
+
+    return kStatus_Success;
 }
 
 /*!
@@ -298,39 +473,26 @@ void PDM_SetChannelConfig(PDM_Type *base, uint32_t channel, const pdm_channel_co
  */
 void PDM_TransferCreateHandle(PDM_Type *base, pdm_handle_t *handle, pdm_transfer_callback_t callback, void *userData)
 {
-    assert(handle);
-
-    uint32_t val = 0, i = 0;
+    assert(handle != NULL);
 
     /* Zero the handle */
-    memset(handle, 0, sizeof(*handle));
+    (void)memset(handle, 0, sizeof(*handle));
 
     s_pdmHandle[PDM_GetInstance(base)] = handle;
 
     handle->callback  = callback;
     handle->userData  = userData;
-    handle->watermark = base->FIFO_CTRL & PDM_FIFO_CTRL_FIFOWMK_MASK;
-
-    /* Compute enabled channel number */
-    val = base->CTRL_1 & 0xFFU;
-    for (i = 0U; i < FSL_FEATURE_PDM_CHANNEL_NUM; i++)
-    {
-        if (val & ((uint32_t)1 << i))
-        {
-            handle->startChannel = i;
-            handle->channelNums++;
-        }
-    }
-    /* get start channel number, current value in startchannel is end channel number actually */
-    handle->startChannel = handle->startChannel - (handle->channelNums - 1U);
+    handle->watermark = (uint8_t)(base->FIFO_CTRL & PDM_FIFO_CTRL_FIFOWMK_MASK);
 
     /* Set the isr pointer */
     s_pdmIsr = PDM_TransferHandleIRQ;
 
     /* Enable RX event IRQ */
-    EnableIRQ(PDM_EVENT_IRQn);
+    (void)EnableIRQ(PDM_EVENT_IRQn);
+#if !(defined FSL_FEATURE_PDM_HAS_NO_INDEPENDENT_ERROR_IRQ && FSL_FEATURE_PDM_HAS_NO_INDEPENDENT_ERROR_IRQ)
     /* Enable FIFO error IRQ */
-    EnableIRQ(PDM_ERROR_IRQn);
+    (void)EnableIRQ(PDM_ERROR_IRQn);
+#endif
 }
 
 /*!
@@ -349,10 +511,10 @@ void PDM_TransferCreateHandle(PDM_Type *base, pdm_handle_t *handle, pdm_transfer
  */
 status_t PDM_TransferReceiveNonBlocking(PDM_Type *base, pdm_handle_t *handle, pdm_transfer_t *xfer)
 {
-    assert(handle);
+    assert(handle != NULL);
 
     /* Check if the queue is full */
-    if (handle->pdmQueue[handle->queueUser].data)
+    if (handle->pdmQueue[handle->queueUser].data != NULL)
     {
         return kStatus_PDM_QueueFull;
     }
@@ -361,13 +523,13 @@ status_t PDM_TransferReceiveNonBlocking(PDM_Type *base, pdm_handle_t *handle, pd
     handle->transferSize[handle->queueUser]      = xfer->dataSize;
     handle->pdmQueue[handle->queueUser].data     = xfer->data;
     handle->pdmQueue[handle->queueUser].dataSize = xfer->dataSize;
-    handle->queueUser                            = (handle->queueUser + 1) % PDM_XFER_QUEUE_SIZE;
+    handle->queueUser                            = (handle->queueUser + 1U) % PDM_XFER_QUEUE_SIZE;
 
     /* Set state to busy */
     handle->state = kStatus_PDM_Busy;
 
     /* Enable interrupt */
-    PDM_EnableInterrupts(base, kPDM_FIFOInterruptEnable);
+    PDM_EnableInterrupts(base, (uint32_t)kPDM_FIFOInterruptEnable);
 
     PDM_Enable(base, true);
 
@@ -385,14 +547,14 @@ status_t PDM_TransferReceiveNonBlocking(PDM_Type *base, pdm_handle_t *handle, pd
  */
 void PDM_TransferAbortReceive(PDM_Type *base, pdm_handle_t *handle)
 {
-    assert(handle);
+    assert(handle != NULL);
 
     /* Use FIFO request interrupt and fifo error */
-    PDM_DisableInterrupts(base, kPDM_FIFOInterruptEnable | kPDM_ErrorInterruptEnable);
+    PDM_DisableInterrupts(base, (uint32_t)kPDM_FIFOInterruptEnable | (uint32_t)kPDM_ErrorInterruptEnable);
     PDM_Enable(base, false);
     handle->state = kStatus_PDM_Idle;
     /* Clear the queue */
-    memset(handle->pdmQueue, 0, sizeof(pdm_transfer_t) * PDM_XFER_QUEUE_SIZE);
+    (void)memset(handle->pdmQueue, 0, sizeof(pdm_transfer_t) * PDM_XFER_QUEUE_SIZE);
     handle->queueDriver = 0;
     handle->queueUser   = 0;
 }
@@ -405,32 +567,68 @@ void PDM_TransferAbortReceive(PDM_Type *base, pdm_handle_t *handle)
  */
 void PDM_TransferHandleIRQ(PDM_Type *base, pdm_handle_t *handle)
 {
-    assert(handle);
+    assert(handle != NULL);
 
-    int16_t *buffer = (int16_t *)handle->pdmQueue[handle->queueDriver].data;
+#if (defined FSL_FEATURE_PDM_HAS_NO_INDEPENDENT_ERROR_IRQ && FSL_FEATURE_PDM_HAS_NO_INDEPENDENT_ERROR_IRQ)
+    uint32_t status = 0U;
+
+#if (defined(FSL_FEATURE_PDM_HAS_STATUS_LOW_FREQ) && (FSL_FEATURE_PDM_HAS_STATUS_LOW_FREQ == 1U))
+    if (PDM_GetStatus(base) & PDM_STAT_LOWFREQF_MASK)
+    {
+        PDM_ClearStatus(base, PDM_STAT_LOWFREQF_MASK);
+        if (handle->callback != NULL)
+        {
+            (handle->callback)(base, handle, kStatus_PDM_CLK_LOW, handle->userData);
+        }
+    }
+#endif
+    status = PDM_GetFifoStatus(base);
+    if (status != 0U)
+    {
+        PDM_ClearFIFOStatus(base, status);
+        if (handle->callback != NULL)
+        {
+            (handle->callback)(base, handle, kStatus_PDM_FIFO_ERROR, handle->userData);
+        }
+    }
+
+#if !(defined(FSL_FEATURE_PDM_HAS_RANGE_CTRL) && FSL_FEATURE_PDM_HAS_RANGE_CTRL)
+    status = PDM_GetOutputStatus(base);
+    if (status != 0U)
+    {
+        PDM_ClearOutputStatus(base, status);
+        if (handle->callback != NULL)
+        {
+            (handle->callback)(base, handle, kStatus_PDM_Output_ERROR, handle->userData);
+        }
+    }
+#endif
+#endif
 
     /* Handle transfer */
-    if ((base->STAT & 0xFFU) && (handle->channelNums) &&
-        ((base->CTRL_1 & PDM_CTRL_1_DISEL_MASK) == (0x2U << PDM_CTRL_1_DISEL_SHIFT)))
+    if (((base->STAT & 0xFFU) != 0U) && (handle->channelNums != 0U) &&
+        ((base->CTRL_1 & PDM_CTRL_1_DISEL_MASK) == (0x2UL << PDM_CTRL_1_DISEL_SHIFT)))
     {
         PDM_ClearStatus(base, 0xFFU);
         /* Judge if the data need to transmit is less than space */
-        uint8_t size =
-            MIN((handle->pdmQueue[handle->queueDriver].dataSize), (handle->watermark * handle->channelNums * 2U));
+        uint8_t size = (uint8_t)MIN((handle->pdmQueue[handle->queueDriver].dataSize),
+                                    ((uint32_t)handle->watermark * handle->channelNums * handle->format));
 
-        PDM_ReadNonBlocking(base, handle->startChannel, handle->channelNums, buffer,
-                            (size / handle->channelNums) >> 1U);
+        PDM_ReadFifo(base, handle->startChannel, handle->channelNums,
+                     (uint8_t *)(uint32_t)handle->pdmQueue[handle->queueDriver].data,
+                     ((size_t)size / handle->channelNums / handle->format), handle->format);
+
         /* Update the internal counter */
         handle->pdmQueue[handle->queueDriver].dataSize -= size;
-        handle->pdmQueue[handle->queueDriver].data += size;
+        handle->pdmQueue[handle->queueDriver].data = &(handle->pdmQueue[handle->queueDriver].data[size]);
     }
 
     /* If finished a block, call the callback function */
     if (handle->pdmQueue[handle->queueDriver].dataSize == 0U)
     {
         handle->pdmQueue[handle->queueDriver].data = NULL;
-        handle->queueDriver                        = (handle->queueDriver + 1) % PDM_XFER_QUEUE_SIZE;
-        if (handle->callback)
+        handle->queueDriver                        = (handle->queueDriver + 1U) % PDM_XFER_QUEUE_SIZE;
+        if (handle->callback != NULL)
         {
             (handle->callback)(base, handle, kStatus_PDM_Idle, handle->userData);
         }
@@ -441,6 +639,125 @@ void PDM_TransferHandleIRQ(PDM_Type *base, pdm_handle_t *handle)
     {
         PDM_TransferAbortReceive(base, handle);
     }
+}
+
+/*!
+ * brief set HWVAD in envelope based mode .
+ * Recommand configurations,
+ * code
+ * static const pdm_hwvad_config_t hwvadConfig = {
+ *   .channel           = 0,
+ *   .initializeTime    = 10U,
+ *   .cicOverSampleRate = 0U,
+ *   .inputGain         = 0U,
+ *   .frameTime         = 10U,
+ *   .cutOffFreq        = kPDM_HwvadHpfBypassed,
+ *   .enableFrameEnergy = false,
+ *   .enablePreFilter   = true,
+};
+
+ * static const pdm_hwvad_noise_filter_t noiseFilterConfig = {
+ *   .enableAutoNoiseFilter = false,
+ *   .enableNoiseMin        = true,
+ *   .enableNoiseDecimation = true,
+ *   .noiseFilterAdjustment = 0U,
+ *   .noiseGain             = 7U,
+ *   .enableNoiseDetectOR   = true,
+ * };
+ * code
+ * param base PDM base pointer.
+ * param hwvadConfig internal filter status.
+ * param noiseConfig Voice activity detector noise filter configure structure pointer.
+ * param zcdConfig Voice activity detector zero cross detector configure structure pointer .
+ * param signalGain signal gain value.
+ */
+void PDM_SetHwvadInEnvelopeBasedMode(PDM_Type *base,
+                                     const pdm_hwvad_config_t *hwvadConfig,
+                                     const pdm_hwvad_noise_filter_t *noiseConfig,
+                                     const pdm_hwvad_zero_cross_detector_t *zcdConfig,
+                                     uint32_t signalGain)
+{
+    assert(hwvadConfig != NULL);
+    assert(noiseConfig != NULL);
+
+    uint32_t i = 0U;
+
+    PDM_SetHwvadConfig(base, hwvadConfig);
+    PDM_SetHwvadSignalFilterConfig(base, true, signalGain);
+    PDM_SetHwvadNoiseFilterConfig(base, noiseConfig);
+    PDM_EnableHwvad(base, true);
+
+    if (NULL != zcdConfig)
+    {
+        PDM_SetHwvadZeroCrossDetectorConfig(base, zcdConfig);
+    }
+
+    PDM_Enable(base, true);
+
+    while (PDM_GetHwvadInitialFlag(base) != 0U)
+    {
+    }
+
+    for (i = 0; i < 3U; i++)
+    {
+        /* set HWVAD interal filter stauts initial */
+        PDM_SetHwvadInternalFilterStatus(base, kPDM_HwvadInternalFilterInitial);
+    }
+
+    PDM_SetHwvadInternalFilterStatus(base, kPDM_HwvadInternalFilterNormalOperation);
+}
+
+/*!
+ * brief set HWVAD in energy based mode .
+ * Recommand configurations,
+ * code
+ * static const pdm_hwvad_config_t hwvadConfig = {
+ *   .channel           = 0,
+ *   .initializeTime    = 10U,
+ *   .cicOverSampleRate = 0U,
+ *   .inputGain         = 0U,
+ *   .frameTime         = 10U,
+ *   .cutOffFreq        = kPDM_HwvadHpfBypassed,
+ *   .enableFrameEnergy = true,
+ *   .enablePreFilter   = true,
+};
+
+ * static const pdm_hwvad_noise_filter_t noiseFilterConfig = {
+ *   .enableAutoNoiseFilter = true,
+ *   .enableNoiseMin        = false,
+ *   .enableNoiseDecimation = false,
+ *   .noiseFilterAdjustment = 0U,
+ *   .noiseGain             = 7U,
+ *   .enableNoiseDetectOR   = false,
+ * };
+ * code
+ * param base PDM base pointer.
+ * param hwvadConfig internal filter status.
+ * param noiseConfig Voice activity detector noise filter configure structure pointer.
+ * param zcdConfig Voice activity detector zero cross detector configure structure pointer .
+ * param signalGain signal gain value, signal gain value should be properly according to application.
+ */
+void PDM_SetHwvadInEnergyBasedMode(PDM_Type *base,
+                                   const pdm_hwvad_config_t *hwvadConfig,
+                                   const pdm_hwvad_noise_filter_t *noiseConfig,
+                                   const pdm_hwvad_zero_cross_detector_t *zcdConfig,
+                                   uint32_t signalGain)
+{
+    assert(hwvadConfig != NULL);
+    assert(noiseConfig != NULL);
+
+    PDM_SetHwvadConfig(base, hwvadConfig);
+    /* signal filter need to disable, but signal gain value should be set */
+    base->VAD0_SCONFIG = PDM_VAD0_SCONFIG_VADSGAIN(signalGain);
+    PDM_SetHwvadNoiseFilterConfig(base, noiseConfig);
+    PDM_EnableHwvad(base, true);
+
+    if (NULL != zcdConfig)
+    {
+        PDM_SetHwvadZeroCrossDetectorConfig(base, zcdConfig);
+    }
+
+    PDM_Enable(base, true);
 }
 
 /*!
@@ -523,14 +840,19 @@ void PDM_SetHwvadZeroCrossDetectorConfig(PDM_Type *base, const pdm_hwvad_zero_cr
 }
 
 #if defined(PDM)
+void PDM_EVENT_DriverIRQHandler(void);
+void PDM_EVENT_DriverIRQHandler(void)
+{
+    assert(s_pdmHandle[0] != NULL);
+    s_pdmIsr(PDM, s_pdmHandle[0]);
+    SDK_ISR_EXIT_BARRIER;
+}
+#elif defined(PDM0)
+void PDM_EVENT_DriverIRQHandler(void);
 void PDM_EVENT_DriverIRQHandler(void)
 {
     assert(s_pdmHandle[0]);
-    s_pdmIsr(PDM, s_pdmHandle[0]);
-/* Add for ARM errata 838869, affects Cortex-M4, Cortex-M4F Store immediate overlapping
-  exception return operation might vector to incorrect interrupt */
-#if defined __CORTEX_M && (__CORTEX_M == 4U)
-    __DSB();
-#endif
+    s_pdmIsr(PDM0, s_pdmHandle[0]);
+    SDK_ISR_EXIT_BARRIER;
 }
 #endif

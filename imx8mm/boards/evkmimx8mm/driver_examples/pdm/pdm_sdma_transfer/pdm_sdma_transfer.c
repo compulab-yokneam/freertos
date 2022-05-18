@@ -6,14 +6,14 @@
  * SPDX-License-Identifier: BSD-3-Clause
  */
 
+#include "pin_mux.h"
+#include "clock_config.h"
 #include "board.h"
 #include "fsl_pdm.h"
 #include "fsl_debug_console.h"
 #include "fsl_pdm_sdma.h"
 #include "fsl_sdma.h"
-#include "sdma_multi_fifo_script.h"
-#include "pin_mux.h"
-#include "clock_config.h"
+#include "fsl_sdma_script.h"
 #include "fsl_common.h"
 /*******************************************************************************
  * Definitions
@@ -21,14 +21,16 @@
 #define DEMO_PDM PDM
 #define DEMO_PDM_CLK_FREQ \
     (24000000U) / (CLOCK_GetRootPreDivider(kCLOCK_RootPdm)) / (CLOCK_GetRootPostDivider(kCLOCK_RootPdm))
-#define DEMO_PDM_FIFO_WATERMARK (4U)
-#define DEMO_PDM_QUALITY_MODE kPDM_QualityModeHigh
-#define DEMO_PDM_CIC_OVERSAMPLE_RATE (0U)
-#define DEMO_PDM_ENABLE_CHANNEL_LEFT (0U)
+#define DEMO_PDM_FIFO_WATERMARK       (4U)
+#define DEMO_PDM_QUALITY_MODE         kPDM_QualityModeHigh
+#define DEMO_PDM_CIC_OVERSAMPLE_RATE  (0U)
+#define DEMO_PDM_ENABLE_CHANNEL_LEFT  (0U)
 #define DEMO_PDM_ENABLE_CHANNEL_RIGHT (1U)
-#define DEMO_PDM_SAMPLE_CLOCK_RATE (640000U) /* 640KHZ */
-#define DEMO_PDM_DMA_REQUEST_SOURCE (24U)
-#define DEMO_DMA SDMAARM2
+#define DEMO_PDM_SAMPLE_CLOCK_RATE    (640000U) /* 640KHZ */
+#define DEMO_PDM_DMA_REQUEST_SOURCE   (24U)
+#define DEMO_PDM_HWVAD_SIGNAL_GAIN    0
+
+#define DEMO_DMA         SDMAARM3
 #define DEMO_DMA_CHANNEL (1U)
 #define BUFFER_SIZE (256)
 /*******************************************************************************
@@ -42,8 +44,9 @@ AT_NONCACHEABLE_SECTION_ALIGN(pdm_sdma_handle_t pdmRxHandle, 4);
 AT_NONCACHEABLE_SECTION_ALIGN(sdma_handle_t dmaHandle, 4);
 AT_NONCACHEABLE_SECTION_ALIGN(sdma_context_data_t sdma_context, 4);
 AT_NONCACHEABLE_SECTION_ALIGN(static int16_t rxBuff[BUFFER_SIZE], 4);
-
-static volatile bool s_lowFreqFlag   = false;
+#if (defined(FSL_FEATURE_PDM_HAS_STATUS_LOW_FREQ) && (FSL_FEATURE_PDM_HAS_STATUS_LOW_FREQ == 1U))
+static volatile bool s_lowFreqFlag = false;
+#endif
 static volatile bool s_fifoErrorFlag = false;
 static volatile bool s_pdmRxFinished = false;
 
@@ -54,10 +57,14 @@ static const pdm_config_t pdmConfig = {
     .cicOverSampleRate = DEMO_PDM_CIC_OVERSAMPLE_RATE,
 };
 static const pdm_channel_config_t channelConfig = {
+#if (defined(FSL_FEATURE_PDM_HAS_DC_OUT_CTRL) && (FSL_FEATURE_PDM_HAS_DC_OUT_CTRL))
+    .outputCutOffFreq = kPDM_DcRemoverCutOff40Hz,
+#else
     .cutOffFreq = kPDM_DcRemoverCutOff152Hz,
-    .gain       = kPDM_DfOutputGain4,
+#endif
+    .gain = kPDM_DfOutputGain4,
 };
-
+const short g_sdma_multi_fifo_script[] = FSL_SDMA_MULTI_FIFO_SCRIPT;
 /*******************************************************************************
  * Code
  ******************************************************************************/
@@ -68,19 +75,35 @@ static void pdmSdmallback(PDM_Type *base, pdm_sdma_handle_t *handle, status_t st
 
 void PDM_ERROR_IRQHandler(void)
 {
-    uint32_t fifoStatus = 0U;
+    uint32_t status = 0U;
+#if (defined(FSL_FEATURE_PDM_HAS_STATUS_LOW_FREQ) && (FSL_FEATURE_PDM_HAS_STATUS_LOW_FREQ == 1U))
     if (PDM_GetStatus(DEMO_PDM) & PDM_STAT_LOWFREQF_MASK)
     {
         PDM_ClearStatus(DEMO_PDM, PDM_STAT_LOWFREQF_MASK);
         s_lowFreqFlag = true;
     }
-
-    fifoStatus = PDM_GetFifoStatus(DEMO_PDM);
-    if (fifoStatus)
+#endif
+    status = PDM_GetFifoStatus(DEMO_PDM);
+    if (status)
     {
-        PDM_ClearFIFOStatus(DEMO_PDM, fifoStatus);
+        PDM_ClearFIFOStatus(DEMO_PDM, status);
         s_fifoErrorFlag = true;
     }
+
+#if defined(FSL_FEATURE_PDM_HAS_RANGE_CTRL) && FSL_FEATURE_PDM_HAS_RANGE_CTRL
+    status = PDM_GetRangeStatus(DEMO_PDM);
+    if (status != 0U)
+    {
+        PDM_ClearRangeStatus(DEMO_PDM, status);
+    }
+#else
+    status = PDM_GetOutputStatus(DEMO_PDM);
+    if (status != 0U)
+    {
+        PDM_ClearOutputStatus(DEMO_PDM, status);
+    }
+#endif
+
     __DSB();
 }
 
@@ -96,7 +119,7 @@ int main(void)
     /* Board specific RDC settings */
     BOARD_RdcInit();
 
-    BOARD_InitPins();
+    BOARD_InitBootPins();
     BOARD_BootClockRUN();
     BOARD_InitDebugConsole();
     BOARD_InitMemory();
@@ -114,8 +137,8 @@ int main(void)
     SDMA_Init(DEMO_DMA, &dmaConfig);
     SDMA_CreateHandle(&dmaHandle, DEMO_DMA, DEMO_DMA_CHANNEL, &sdma_context);
     SDMA_SetChannelPriority(DEMO_DMA, DEMO_DMA_CHANNEL, 2);
-    SDMA_LoadScript(DEMO_DMA, SCRIPT_CODE_START_ADDR, (void *)sdma_multi_fifo_script, SCRIPT_CODE_SIZE * sizeof(short));
-
+    SDMA_LoadScript(DEMO_DMA, FSL_SDMA_SCRIPT_CODE_START_ADDR, (void *)g_sdma_multi_fifo_script,
+                    FSL_SDMA_SCRIPT_CODE_SIZE);
     /* Set up pdm */
     PDM_Init(DEMO_PDM, &pdmConfig);
     PDM_TransferCreateHandleSDMA(DEMO_PDM, &pdmRxHandle, pdmSdmallback, NULL, &dmaHandle, DEMO_PDM_DMA_REQUEST_SOURCE);
@@ -140,7 +163,7 @@ int main(void)
     PRINTF("PDM recieve two channel data:\n\r");
     for (i = 0U; i < BUFFER_SIZE; i++)
     {
-        PRINTF("%4d ", rxBuff[i]);
+        PRINTF("%6x ", rxBuff[i]);
         if (++j > 32U)
         {
             j = 0U;

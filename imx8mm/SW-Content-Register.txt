@@ -1,104 +1,138 @@
 Release Name: MCUXpresso Software Development Kit (SDK)
-Release Version: 2.6.0
-Package License: LA_OPT_NXP_Software_License.htm - Production Use, Section 2.3 applies
+Release Version: 2.11.0
+Package License: LA_OPT_NXP_Software_License.txt - Additional Distribution License granted, license in Section 2.3 applies
 
-KSDK_Peripheral_Driver     Description: Peripheral drivers are designed for  
+SDK_Peripheral_Driver      Name: SDK Peripheral Driver                       
+                           Version: 2.x.x                                    
+                           Outgoing License: BSD-3-Clause                    
+                           License File: COPYING-BSD-3                       
+                           Format: source code                               
+                           Description: Peripheral drivers are designed for  
                            the most common use cases identified for the      
                            underlying hardware block.                        
-                           Author: Freescale                                 
-                           Version: 2.x.x                                    
-                           License: Open Source - BSD-3-Clause               
-                           Format: source code                               
-                           name: KSDK Peripheral Driver                      
                            Location: devices/<device>/drivers                
+                           Origin: NXP (BSD-3-Clause)                        
 
-FreeRTOS_heap_newlib       Author: Dave Nadler, Nadler & Associates          
-                           Consulting                                        
-                           Description: Newlib allocator for FreeRTOS        
-                           Format: source code                               
-                           License: Open Source - BSD-3-Clause               
-                           Location:                                         
-                           rtos/amazon-freertos/lib/FreeRTOS/portable/MemMang
-                           /                                                 
-                           name: Amazon FreeRTOS                             
-                           URL:                                              
-                           http://www.nadler.com/embedded/newlibAndFreeRTOS.h
-                           tml                                               
-                           version: 1.0.0                                    
+SDK_Examples               Name: SDK examples                                
+                           Version: NA                                       
+                           Outgoing License: BSD-3-Clause                    
+                           License File: COPYING-BSD-3                       
+                           Format: source code, binary, project files, linker
+                           files                                             
+                           Description: SDK out of box examples to show how  
+                           to use peripheral drivers and integrate           
+                           middleware.                                       
+                           Location: boards/<board>/                         
+                           Origin: NXP (BSD-3-Clause)                        
 
-cmsisdsp                   name: CMSIS DSP Library                           
+SDK_Device                 Name: SDK SoC files                               
+                           Version: NA                                       
+                           Outgoing License: BSD-3-Clause                    
+                           License File: COPYING-BSD-3                       
+                           Format: source code, linker files                 
+                           Description: Device system files, template files, 
+                           IDE related startup and linker files.             
+                           Location: devices/<device>/                       
+                           Origin: NXP (BSD-3-Clause)                        
+
+cmsis                      Name: CMSIS                                       
+                           Version: 5.6.0                                    
+                           Outgoing License: Apache License 2.0              
+                           License File: CMSIS/LICENSE.txt                   
                            Format: source code                               
-                           License: Apache License 2.0, See CMSIS/LICENSE.txt
-                           parentversion: 1.5.2                              
-                           Author: ARM                                       
-                           version: 1.5.2 (CMSIS download 5.3.0)             
-                           URL:                                              
+                           Description: Vendor-independent hardware          
+                           abstraction layer for microcontrollers that are   
+                           based on Arm Cortex processors, distributed by    
+                           ARM. cores                                        
+                           Location: CMSIS/                                  
+                           Origin: ARM (Apache-2.0) -                        
                            https://github.com/ARM-software/CMSIS_5/releases/t
-                           ag/5.3.0                                          
-                           Location: CMSIS/DSP_Lib                           
-                           Description: A digital signal processing library  
-                           for Cortex-M cores from ARM                       
+                           ag/5.6.0                                          
 
-cmsiscore                  Author: ARM                                       
-                           parentversion: 5.1.1                              
-                           URL:                                              
-                           https://github.com/ARM-software/CMSIS_5/releases/t
-                           ag/5.3.0                                          
-                           name: CMSIS Core header files                     
+cmsis_gpio                 Name: CMSIS GPIO Interface                        
+                           Version: 2.0.0                                    
+                           Outgoing License: BSD-3-Clause                    
+                           License File: COPYING-BSD-3                       
                            Format: source code                               
-                           License: Apache License 2.0, See CMSIS/LICENSE.txt
-                           Location: CMSIS/Include                           
-                           version: 5.1.1 (CMSIS Download 5.3.0)             
-                           Description: Industry-standard header files       
-                           distributes by ARM for cortex-M cores             
+                           Description: CMSIS Driver style GPIO interface    
+                           definition created by NXP.                        
+                           Location: CMSIS/Driver/Include/Driver_GPIO.h      
+                           Origin: NXP (BSD-3-Clause)                        
 
-cmsis_drivers              Author: Freescale                                 
-                           version: 2.x.x                                    
+SDK_Components             Name: SDK components and board peripheral drivers 
+                           Version: NA                                       
+                           Outgoing License: BSD-3-Clause                    
+                           License File: COPYING-BSD-3                       
+                           Format: source code                               
+                           Description: SDK components and board peripheral  
+                           drivers, for example, flash and codec drivers.    
+                           Location: components/                             
+                           Origin: NXP (BSD-3-Clause)                        
+
+freertos_kernel            Name: FreeRTOS                                    
+                           Version: 10.4.3_rev1                              
+                           Outgoing License: MIT                             
+                           License File:                                     
+                           rtos/freertos/freertos_kernel/LICENSE.md          
+                           Format: source code                               
+                           Description: Open source RTOS kernel for small    
+                           devices                                           
+                           Location: rtos/freertos/freertos_kernel           
+                           Origin: Amazon (MIT)                              
+                           Url: https://aws.amazon.com/freertos/             
+
+rtcesl                     Name: rtcesl                                      
+                           Version: 4.7 (CM0,CM4,CM7,CM33) + 4.5 (DSC)       
+                           Outgoing License: BSD-3-Clause                    
+                           License File: COPYING-BSD-3                       
+                           Format: object code & header files                
+                           Description: NXP Real Time Control Embedded       
+                           Software Library.                                 
+                           Location: middleware/rtcesl                       
+                           Origin: NXP (BSD-3-Clause)                        
+
+cmsis_drivers              Name: SDK CMSIS Peripheral Drivers                
+                           Version: 2.x.x                                    
+                           Outgoing License: Apache License 2.0              
+                           License File: CMSIS/LICENSE.txt                   
                            Format: source code                               
                            Description: CMSIS Peripheral drivers are designed
                            to provide hardware independent APIs which make   
                            application reusable across a wide range of       
                            supported microcontroller devices.                
-                           name: KSDK CMSIS Peripheral Drivers               
                            Location: devices/<device>/cmsis_drivers          
-                           License: Open Source - Apache 2.0 & BSD-3-Clause  
+                           Origin: NXP (Apache License 2.0)                  
 
-segger_systemview          version: 2.40a                                    
-                           Location:                                         
-                           boards/<board>/rtos_examples/visualization/freerto
-                           s_segger_sysview                                  
-                           Description: Segger systemview demo               
-                           License: Open Source - BSD-3-Clause               
-                           Author: Segger                                    
-                           name: Segger SystemView Demo                      
+multicore                  Name: Multicore SDK                               
+                           Version: 2.11.0                                   
+                           Outgoing License: BSD-3-Clause                    
+                           License File: COPYING-BSD-3                       
                            Format: source code                               
-
-percepio_snapshot          version: 3.0.9                                    
-                           Location:                                         
-                           boards/<board>/rtos_examples/visualization/freerto
-                           s_percepio_snapshot                               
-                           Description: Percepio Tracealyzer                 
-                           License: Open Source - BSD-3-Clause               
-                           Author: Percepio                                  
-                           name: Percepio Tracealyzer - Snapshot Demo        
-                           Format: source code                               
-
-multicore                  version: 2.6.0                                    
-                           Location: middleware/multicore                    
                            Description: NXP Multicore Software Development   
                            Kit.                                              
-                           License: Open Source - BSD-3-Clause               
-                           Author: NXP                                       
-                           name: Multicore SDK                               
-                           Format: source code                               
+                           Location: middleware/multicore                    
+                           Origin: NXP (BSD-3-Clause)                        
 
-rpmsg_lite                 version: 2.2.0                                    
-                           Location: middleware/multicore/rpmsg_lite         
+rpmsg_lite                 Name: RPMsg-Lite                                  
+                           Version: 3.2.0                                    
+                           Outgoing License: BSD-3-Clause                    
+                           License File: COPYING-BSD-3                       
+                           Format: source code                               
                            Description: Open Asymmetric Multi Processing     
                            (OpenAMP) framework project                       
-                           License: Open Source - BSD-3-Clause               
-                           Author: Mentor Graphics Corporation & community   
+                           Location: middleware/multicore/rpmsg_lite         
+                           Origin: Mentor Graphics Corporation & community   
                            contributors                                      
-                           name: RPMsg-Lite                                  
-                           Format: source code                               
-                           URL: https://github.com/OpenAMP/open-amp          
+                           Url: https://github.com/NXPmicro/rpmsg-lite       
+
+freertos_corehttp          name: FreeRTOS coreHTTP library                   
+                           version: 2.0.1                                    
+                           Outgoing License: MIT                             
+                           License File:                                     
+                           rtos/freertos/librarires/coreHTTP/LICENSE         
+                           Format: source code, header files                 
+                           Description: C language HTTP client library       
+                           designed for embedded platforms                   
+                           Location: rtos/freertos/libraries/coreHTTP        
+                           Origin: FreeRTOS -                                
+                           https://github.com/FreeRTOS/coreHTTP              

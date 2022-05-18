@@ -8,8 +8,8 @@ example take turns to shine the LED.
 
 Toolchain supported
 ===================
-- IAR embedded Workbench  8.32.3
-- GCC ARM Embedded  8.2.1
+- IAR embedded Workbench  9.10.2
+- GCC ARM Embedded  10.2.1
 
 Hardware requirements
 =====================
@@ -46,7 +46,4 @@ When the example runs successfully, the following message is displayed in the te
  GPIO Driver example
  The LED is blinking.
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-
-Customization options
-=====================
 

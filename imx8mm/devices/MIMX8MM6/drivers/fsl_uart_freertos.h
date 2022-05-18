@@ -1,6 +1,6 @@
 /*
  * Copyright (c) 2016, Freescale Semiconductor, Inc.
- * Copyright 2016-2017 NXP
+ * Copyright 2016-2020 NXP
  * All rights reserved.
  *
  * SPDX-License-Identifier: BSD-3-Clause
@@ -8,7 +8,6 @@
 #ifndef __FSL_UART_RTOS_H__
 #define __FSL_UART_RTOS_H__
 
-#include "FreeRTOSConfig.h"
 #include "fsl_uart.h"
 #include <FreeRTOS.h>
 #include <event_groups.h>
@@ -25,8 +24,8 @@
 
 /*! @name Driver version */
 /*@{*/
-/*! @brief UART freertos driver version 2.0.0. */
-#define FSL_UART_FREERTOS_DRIVER_VERSION (MAKE_VERSION(2, 0, 0))
+/*! @brief UART FreeRTOS driver version 2.1.1. */
+#define FSL_UART_FREERTOS_DRIVER_VERSION (MAKE_VERSION(2, 1, 1))
 /*@}*/
 
 /*! @brief UART configuration structure */
@@ -49,11 +48,11 @@ typedef struct _uart_rtos_config
  */
 /*@{*/
 /*! @brief Event flag - transfer complete. */
-#define RTOS_UART_COMPLETE 0x1
+#define RTOS_UART_COMPLETE 0x1U
 /*! @brief Event flag - ring buffer overrun. */
-#define RTOS_UART_RING_BUFFER_OVERRUN 0x2
+#define RTOS_UART_RING_BUFFER_OVERRUN 0x2U
 /*! @brief Event flag - hardware buffer overrun. */
-#define RTOS_UART_HARDWARE_BUFFER_OVERRUN 0x4
+#define RTOS_UART_HARDWARE_BUFFER_OVERRUN 0x4U
 /*@}*/
 
 /*! @brief UART FreeRTOS transfer structure. */
@@ -124,7 +123,7 @@ int UART_RTOS_Deinit(uart_rtos_handle_t *handle);
  * @param buffer The pointer to the buffer to send.
  * @param length The number of bytes to send.
  */
-int UART_RTOS_Send(uart_rtos_handle_t *handle, const uint8_t *buffer, uint32_t length);
+int UART_RTOS_Send(uart_rtos_handle_t *handle, uint8_t *buffer, uint32_t length);
 
 /*!
  * @brief Receives data.

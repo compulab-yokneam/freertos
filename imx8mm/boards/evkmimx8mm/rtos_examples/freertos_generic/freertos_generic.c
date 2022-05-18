@@ -1,6 +1,6 @@
 /*
- * FreeRTOS Kernel V10.2.0
- * Copyright (C) 2019 Amazon.com, Inc. or its affiliates.  All Rights Reserved.
+ * FreeRTOS Kernel V10.4.3
+ * Copyright (C) 2020 Amazon.com, Inc. or its affiliates.  All Rights Reserved.
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy of
  * this software and associated documentation files (the "Software"), to deal in
@@ -19,10 +19,9 @@
  * IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN
  * CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
  *
- * http://www.FreeRTOS.org
- * http://aws.amazon.com/freertos
+ * https://www.FreeRTOS.org
+ * https://github.com/FreeRTOS
  *
- * 1 tab == 4 spaces!
  */
 
 /* Kernel includes. */
@@ -37,10 +36,10 @@ to be available here. */
 /* Freescale includes. */
 #include "fsl_device_registers.h"
 #include "fsl_debug_console.h"
-#include "board.h"
-
 #include "pin_mux.h"
 #include "clock_config.h"
+#include "board.h"
+
 /*******************************************************************************
  * Definitions
  ******************************************************************************/
@@ -48,8 +47,8 @@ to be available here. */
 /* Priorities at which the tasks are created.  The event semaphore task is
 given the maximum priority of ( configMAX_PRIORITIES - 1 ) to ensure it runs as
 soon as the semaphore is given. */
-#define mainQUEUE_RECEIVE_TASK_PRIORITY (tskIDLE_PRIORITY + 2)
-#define mainQUEUE_SEND_TASK_PRIORITY (tskIDLE_PRIORITY + 1)
+#define mainQUEUE_RECEIVE_TASK_PRIORITY   (tskIDLE_PRIORITY + 2)
+#define mainQUEUE_SEND_TASK_PRIORITY      (tskIDLE_PRIORITY + 1)
 #define mainEVENT_SEMAPHORE_TASK_PRIORITY (configMAX_PRIORITIES - 1)
 
 /* The rate at which data is sent to the queue, specified in milliseconds, and
@@ -118,7 +117,7 @@ int main(void)
     /* Board specific RDC settings */
     BOARD_RdcInit();
 
-    BOARD_InitPins();
+    BOARD_InitBootPins();
     BOARD_BootClockRUN();
     BOARD_InitDebugConsole();
     BOARD_InitMemory();
@@ -141,32 +140,48 @@ int main(void)
 
     /* Create the queue receive task as described in the comments at the top
     of this    file. */
-    xTaskCreate(/* The function that implements the task. */
-                prvQueueReceiveTask,
-                /* Text name for the task, just to help debugging. */
-                "Rx",
-                /* The size (in words) of the stack that should be created
-                for the task. */
-                configMINIMAL_STACK_SIZE + 166,
-                /* A parameter that can be passed into the task.  Not used
-                in this simple demo. */
-                NULL,
-                /* The priority to assign to the task.  tskIDLE_PRIORITY
-                (which is 0) is the lowest priority.  configMAX_PRIORITIES - 1
-                is the highest priority. */
-                mainQUEUE_RECEIVE_TASK_PRIORITY,
-                /* Used to obtain a handle to the created task.  Not used in
-                this simple demo, so set to NULL. */
-                NULL);
+    if (xTaskCreate(/* The function that implements the task. */
+                    prvQueueReceiveTask,
+                    /* Text name for the task, just to help debugging. */
+                    "Rx",
+                    /* The size (in words) of the stack that should be created
+                    for the task. */
+                    configMINIMAL_STACK_SIZE + 166,
+                    /* A parameter that can be passed into the task.  Not used
+                    in this simple demo. */
+                    NULL,
+                    /* The priority to assign to the task.  tskIDLE_PRIORITY
+                    (which is 0) is the lowest priority.  configMAX_PRIORITIES - 1
+                    is the highest priority. */
+                    mainQUEUE_RECEIVE_TASK_PRIORITY,
+                    /* Used to obtain a handle to the created task.  Not used in
+                    this simple demo, so set to NULL. */
+                    NULL) != pdPASS)
+    {
+        PRINTF("Task creation failed!.\r\n");
+        while (1)
+            ;
+    }
 
     /* Create the queue send task in exactly the same way.  Again, this is
     described in the comments at the top of the file. */
-    xTaskCreate(prvQueueSendTask, "TX", configMINIMAL_STACK_SIZE + 166, NULL, mainQUEUE_SEND_TASK_PRIORITY, NULL);
+    if (xTaskCreate(prvQueueSendTask, "TX", configMINIMAL_STACK_SIZE + 166, NULL, mainQUEUE_SEND_TASK_PRIORITY, NULL) !=
+        pdPASS)
+    {
+        PRINTF("Task creation failed!.\r\n");
+        while (1)
+            ;
+    }
 
     /* Create the task that is synchronised with an interrupt using the
     xEventSemaphore semaphore. */
-    xTaskCreate(prvEventSemaphoreTask, "Sem", configMINIMAL_STACK_SIZE + 166, NULL, mainEVENT_SEMAPHORE_TASK_PRIORITY,
-                NULL);
+    if (xTaskCreate(prvEventSemaphoreTask, "Sem", configMINIMAL_STACK_SIZE + 166, NULL,
+                    mainEVENT_SEMAPHORE_TASK_PRIORITY, NULL) != pdPASS)
+    {
+        PRINTF("Task creation failed!.\r\n");
+        while (1)
+            ;
+    }
 
     /* Create the software timer as described in the comments at the top of
     this file. */
@@ -274,7 +289,10 @@ static void prvEventSemaphoreTask(void *pvParameters)
     for (;;)
     {
         /* Block until the semaphore is 'given'. */
-        xSemaphoreTake(xEventSemaphore, portMAX_DELAY);
+        if (xSemaphoreTake(xEventSemaphore, portMAX_DELAY) != pdTRUE)
+        {
+            PRINTF("Failed to take semaphore.\r\n");
+        }
 
         /* Count the number of times the semaphore is received. */
         ulCountOfReceivedSemaphores++;
@@ -341,7 +359,7 @@ void vApplicationMallocFailedHook(void)
 /*!
  * @brief Stack overflow hook.
  */
-void vApplicationStackOverflowHook(TaskHandle_t xTask, signed char *pcTaskName)
+void vApplicationStackOverflowHook(TaskHandle_t xTask, char *pcTaskName)
 {
     (void)pcTaskName;
     (void)xTask;

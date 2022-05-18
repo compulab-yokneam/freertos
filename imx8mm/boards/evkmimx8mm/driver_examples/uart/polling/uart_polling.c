@@ -6,15 +6,15 @@
  * SPDX-License-Identifier: BSD-3-Clause
  */
 
+#include "pin_mux.h"
+#include "clock_config.h"
 #include "board.h"
 #include "fsl_uart.h"
 
-#include "pin_mux.h"
-#include "clock_config.h"
 /*******************************************************************************
  * Definitions
  ******************************************************************************/
-#define DEMO_UART UART4
+#define DEMO_UART          UART4
 #define DEMO_UART_CLK_FREQ BOARD_DEBUG_UART_CLK_FREQ
 #define DEMO_UART_BAUDRATE 115200U
 
@@ -43,9 +43,8 @@ int main(void)
     /* Board specific RDC settings */
     BOARD_RdcInit();
 
-    BOARD_InitPins();
+    BOARD_InitBootPins();
     BOARD_BootClockRUN();
-    BOARD_InitDebugConsole();
     BOARD_InitMemory();
 
     /*

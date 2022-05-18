@@ -6,10 +6,10 @@
  * SPDX-License-Identifier: BSD-3-Clause
  */
 
-#include "board.h"
-
 #include "pin_mux.h"
 #include "clock_config.h"
+#include "board.h"
+
 #include "fsl_uart_cmsis.h"
 /*******************************************************************************
  * Definitions
@@ -66,7 +66,7 @@ int main(void)
     /* Board specific RDC settings */
     BOARD_RdcInit();
 
-    BOARD_InitPins();
+    BOARD_InitBootPins();
     BOARD_BootClockRUN();
     BOARD_InitMemory();
 
@@ -86,13 +86,6 @@ int main(void)
 
     while (1)
     {
-        /* If g_txBuffer is empty and g_rxBuffer is full, copy g_rxBuffer to g_txBuffer. */
-        if ((!rxBufferEmpty) && (!txBufferFull))
-        {
-            memcpy(g_txBuffer, g_rxBuffer, ECHO_BUFFER_LENGTH);
-            rxBufferEmpty = true;
-            txBufferFull  = true;
-        }
         /* If g_txBuffer is empty and g_rxBuffer is full, copy g_rxBuffer to g_txBuffer. */
         if ((!rxBufferEmpty) && (!txBufferFull))
         {

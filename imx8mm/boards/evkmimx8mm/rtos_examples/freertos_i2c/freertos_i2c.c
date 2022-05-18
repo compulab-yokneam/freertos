@@ -17,13 +17,13 @@
 #include "semphr.h"
 
 /*  SDK Included Files */
+#include "pin_mux.h"
+#include "clock_config.h"
 #include "board.h"
 #include "fsl_debug_console.h"
 #include "fsl_i2c.h"
 #include "fsl_i2c_freertos.h"
 
-#include "pin_mux.h"
-#include "clock_config.h"
 /*******************************************************************************
  * Definitions
  ******************************************************************************/
@@ -37,13 +37,13 @@
 #define EXAMPLE_I2C_SLAVE_CLK_FREQ                                                          \
     (CLOCK_GetPllFreq(kCLOCK_SystemPll1Ctrl) / (CLOCK_GetRootPreDivider(kCLOCK_RootI2c3)) / \
      (CLOCK_GetRootPostDivider(kCLOCK_RootI2c3)) / 5) /* SYSTEM PLL1 DIV5 */
-#define SINGLE_BOARD 0
+#define SINGLE_BOARD   0
 #define BOARD_TO_BOARD 1
 
 #define EXAMPLE_CONNECT_I2C BOARD_TO_BOARD
 #if (EXAMPLE_CONNECT_I2C == BOARD_TO_BOARD)
-#define isMASTER 0
-#define isSLAVE 1
+#define isMASTER         0
+#define isSLAVE          1
 #define I2C_MASTER_SLAVE isMASTER
 #endif
 
@@ -52,11 +52,11 @@
 #endif
 
 #define EXAMPLE_I2C_MASTER ((I2C_Type *)EXAMPLE_I2C_MASTER_BASE)
-#define EXAMPLE_I2C_SLAVE ((I2C_Type *)EXAMPLE_I2C_SLAVE_BASE)
+#define EXAMPLE_I2C_SLAVE  ((I2C_Type *)EXAMPLE_I2C_SLAVE_BASE)
 
 #define I2C_MASTER_SLAVE_ADDR_7BIT (0x7EU)
-#define I2C_BAUDRATE (100000) /* 100K */
-#define I2C_DATA_LENGTH (32)  /* MAX is 256 */
+#define I2C_BAUDRATE               (100000) /* 100K */
+#define I2C_DATA_LENGTH            (32)     /* MAX is 256 */
 
 /*******************************************************************************
  * Prototypes
@@ -77,7 +77,7 @@ SemaphoreHandle_t i2c_sem;
  * Definitions
  ******************************************************************************/
 /* Task priorities. */
-#define slave_task_PRIORITY (configMAX_PRIORITIES - 1)
+#define slave_task_PRIORITY  (configMAX_PRIORITIES - 1)
 #define master_task_PRIORITY (configMAX_PRIORITIES - 2)
 /*******************************************************************************
  * Prototypes
@@ -98,7 +98,7 @@ int main(void)
     /* Board specific RDC settings */
     BOARD_RdcInit();
 
-    BOARD_InitPins();
+    BOARD_InitBootPins();
     BOARD_BootClockRUN();
     BOARD_InitDebugConsole();
     BOARD_InitMemory();
@@ -116,7 +116,8 @@ int main(void)
     PRINTF("This example use two boards to connect with one as master and another as slave.\r\n");
 #endif
 
-    if (xTaskCreate(slave_task, "Slave_task", configMINIMAL_STACK_SIZE + 60, NULL, slave_task_PRIORITY, NULL) != pdPASS)
+    if (xTaskCreate(slave_task, "Slave_task", configMINIMAL_STACK_SIZE + 100, NULL, slave_task_PRIORITY, NULL) !=
+        pdPASS)
     {
         PRINTF("Failed to create slave task");
         while (1)
@@ -233,7 +234,10 @@ static void slave_task(void *pvParameters)
 #endif /* ((I2C_MASTER_SLAVE == isMASTER) ||  (EXAMPLE_CONNECT_I2C == SINGLE_BOARD)) */
 
     /* Wait for transfer to finish */
-    xSemaphoreTake(cb_msg.sem, portMAX_DELAY);
+    if (xSemaphoreTake(cb_msg.sem, portMAX_DELAY) != pdTRUE)
+    {
+        PRINTF("Failed to take semaphore.\r\n");
+    }
 
 #if ((I2C_MASTER_SLAVE == isSLAVE) || (EXAMPLE_CONNECT_DSPI == SINGLE_BOARD))
     if (cb_msg.async_status == kStatus_Success)
@@ -288,7 +292,10 @@ static void slave_task(void *pvParameters)
 #endif
 
     /* Wait for transfer to finish */
-    xSemaphoreTake(cb_msg.sem, portMAX_DELAY);
+    if (xSemaphoreTake(cb_msg.sem, portMAX_DELAY) != pdTRUE)
+    {
+        PRINTF("Failed to take semaphore.\r\n");
+    }
 #if (EXAMPLE_CONNECT_I2C == BOARD_TO_BOARD)
     PRINTF("\r\nEnd of FreeRTOS I2C example.\r\n");
 #endif
@@ -356,10 +363,7 @@ static void master_task(void *pvParameters)
     }
 #if (EXAMPLE_CONNECT_I2C == BOARD_TO_BOARD)
     /* Delay to wait slave is ready */
-    for (uint32_t i = 0; i < EXAMPLE_I2C_DEALY_COUNT; i++)
-    {
-        __NOP();
-    }
+    SDK_DelayAtLeastUs(5000, SDK_DEVICE_MAXIMUM_CPU_CLOCK_FREQUENCY);
 #endif
     /* Set up master to receive data from slave. */
 

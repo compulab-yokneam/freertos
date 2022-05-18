@@ -12,19 +12,20 @@
 #include "rpmsg_lite.h"
 #include "rpmsg_queue.h"
 #include "rpmsg_ns.h"
+#include "pin_mux.h"
+#include "clock_config.h"
 #include "board.h"
 #include "fsl_debug_console.h"
 #include "FreeRTOS.h"
 #include "task.h"
 
-#include "pin_mux.h"
-#include "clock_config.h"
 #include "fsl_uart.h"
+#include "rsc_table.h"
 /*******************************************************************************
  * Definitions
  ******************************************************************************/
-#define RPMSG_LITE_SHMEM_BASE (0xB8000000U)
-#define RPMSG_LITE_LINK_ID (RL_PLATFORM_IMX8MM_M4_USER_LINK_ID)
+#define RPMSG_LITE_SHMEM_BASE         (VDEV0_VRING_BASE)
+#define RPMSG_LITE_LINK_ID            (RL_PLATFORM_IMX8MM_M4_USER_LINK_ID)
 #define RPMSG_LITE_NS_ANNOUNCE_STRING "rpmsg-virtual-tty-channel-1"
 #define APP_TASK_STACK_SIZE (256)
 #ifndef LOCAL_EPT_ADDR
@@ -41,23 +42,47 @@ static char app_buf[512]; /* Each RPMSG buffer can carry less than 512 payload *
 /*******************************************************************************
  * Code
  ******************************************************************************/
-TaskHandle_t app_task_handle = NULL;
+static TaskHandle_t app_task_handle = NULL;
 
-void app_nameservice_isr_cb(unsigned int new_ept, const char *new_ept_name, unsigned long flags, void *user_data)
+static struct rpmsg_lite_instance *volatile my_rpmsg = NULL;
+
+static struct rpmsg_lite_endpoint *volatile my_ept = NULL;
+static volatile rpmsg_queue_handle my_queue        = NULL;
+void app_destroy_task(void)
 {
+    if (app_task_handle)
+    {
+        vTaskDelete(app_task_handle);
+        app_task_handle = NULL;
+    }
+
+    if (my_ept)
+    {
+        rpmsg_lite_destroy_ept(my_rpmsg, my_ept);
+        my_ept = NULL;
+    }
+
+    if (my_queue)
+    {
+        rpmsg_queue_destroy(my_rpmsg, my_queue);
+        my_queue = NULL;
+    }
+
+    if (my_rpmsg)
+    {
+        rpmsg_lite_deinit(my_rpmsg);
+        my_rpmsg = NULL;
+    }
 }
 
 void app_task(void *param)
 {
-    volatile unsigned long remote_addr;
-    struct rpmsg_lite_endpoint *volatile my_ept;
-    volatile rpmsg_queue_handle my_queue;
-    struct rpmsg_lite_instance *volatile my_rpmsg;
+    volatile uint32_t remote_addr;
     void *rx_buf;
-    int len;
-    int result;
+    uint32_t len;
+    int32_t result;
     void *tx_buf;
-    unsigned long size;
+    uint32_t size;
 
     /* Print the initial banner */
     PRINTF("\r\nRPMSG String Echo FreeRTOS RTOS API Demo...\r\n");
@@ -66,31 +91,30 @@ void app_task(void *param)
     uint32_t startupData;
 
     /* Get the startup data */
-    MCMGR_GetStartupData(kMCMGR_Core1, &startupData);
+    (void)MCMGR_GetStartupData(kMCMGR_Core1, &startupData);
 
     my_rpmsg = rpmsg_lite_remote_init((void *)startupData, RPMSG_LITE_LINK_ID, RL_NO_FLAGS);
 
     /* Signal the other core we are ready */
-    MCMGR_SignalReady(kMCMGR_Core1);
+    (void)MCMGR_SignalReady(kMCMGR_Core1);
 #else
     my_rpmsg = rpmsg_lite_remote_init((void *)RPMSG_LITE_SHMEM_BASE, RPMSG_LITE_LINK_ID, RL_NO_FLAGS);
 #endif /* MCMGR_USED */
 
-    while (!rpmsg_lite_is_link_up(my_rpmsg))
+    while (0 == rpmsg_lite_is_link_up(my_rpmsg))
         ;
 
     my_queue = rpmsg_queue_create(my_rpmsg);
     my_ept   = rpmsg_lite_create_ept(my_rpmsg, LOCAL_EPT_ADDR, rpmsg_queue_rx_cb, my_queue);
-    rpmsg_ns_bind(my_rpmsg, app_nameservice_isr_cb, NULL);
-    rpmsg_ns_announce(my_rpmsg, my_ept, RPMSG_LITE_NS_ANNOUNCE_STRING, RL_NS_CREATE);
+    (void)rpmsg_ns_announce(my_rpmsg, my_ept, RPMSG_LITE_NS_ANNOUNCE_STRING, RL_NS_CREATE);
 
     PRINTF("\r\nNameservice sent, ready for incoming messages...\r\n");
 
     for (;;)
     {
         /* Get RPMsg rx buffer with message */
-        result = rpmsg_queue_recv_nocopy(my_rpmsg, my_queue, (unsigned long *)&remote_addr, (char **)&rx_buf, &len,
-                                         RL_BLOCK);
+        result =
+            rpmsg_queue_recv_nocopy(my_rpmsg, my_queue, (uint32_t *)&remote_addr, (char **)&rx_buf, &len, RL_BLOCK);
         if (result != 0)
         {
             assert(false);
@@ -126,6 +150,16 @@ void app_task(void *param)
     }
 }
 
+void app_create_task(void)
+{
+    if (xTaskCreate(app_task, "APP_TASK", APP_TASK_STACK_SIZE, NULL, tskIDLE_PRIORITY + 1, &app_task_handle) != pdPASS)
+    {
+        PRINTF("\r\nFailed to create application task\r\n");
+        for (;;)
+            ;
+    }
+}
+
 /*!
  * @brief Main function
  */
@@ -135,26 +169,22 @@ int main(void)
     /* Board specific RDC settings */
     BOARD_RdcInit();
 
-    BOARD_InitPins();
+    BOARD_InitBootPins();
     BOARD_BootClockRUN();
     BOARD_InitDebugConsole();
     BOARD_InitMemory();
 
+    copyResourceTable();
+
 #ifdef MCMGR_USED
     /* Initialize MCMGR before calling its API */
-    MCMGR_Init();
+    (void)MCMGR_Init();
 #endif /* MCMGR_USED */
 
-    if (xTaskCreate(app_task, "APP_TASK", APP_TASK_STACK_SIZE, NULL, tskIDLE_PRIORITY + 1, &app_task_handle) != pdPASS)
-    {
-        PRINTF("\r\nFailed to create application task\r\n");
-        while (1)
-            ;
-    }
-
+    app_create_task();
     vTaskStartScheduler();
 
     PRINTF("Failed to start FreeRTOS on core0.\n");
-    while (1)
+    for (;;)
         ;
 }

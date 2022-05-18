@@ -1,32 +1,32 @@
 /*
- * Copyright 2017 NXP
+ * Copyright 2017-2021 NXP
  * All rights reserved.
  *
  * SPDX-License-Identifier: BSD-3-Clause
  */
 
+#include "pin_mux.h"
+#include "clock_config.h"
 #include "board.h"
 #include "fsl_debug_console.h"
 #include "fsl_rdc.h"
 #include "fsl_rdc_sema42.h"
 
-#include "pin_mux.h"
-#include "clock_config.h"
 #include "fsl_gpio.h"
 /*******************************************************************************
  * Definitions
  ******************************************************************************/
-#define APP_RDC RDC
-#define APP_CUR_MASTER kRDC_Master_M4
-#define APP_CUR_MASTER_DID BOARD_DOMAIN_ID /* Current master domain ID. */
-#define APP_RDC_PERIPH kRDC_Periph_GPIO1
-#define APP_RDC_SEMA42 RDC_SEMAPHORE1 /* Current master domain ID. */
+#define APP_RDC             RDC
+#define APP_CUR_MASTER      kRDC_Master_M4
+#define APP_CUR_MASTER_DID  BOARD_DOMAIN_ID /* Current master domain ID. */
+#define APP_RDC_PERIPH      kRDC_Periph_GPIO1
+#define APP_RDC_SEMA42      RDC_SEMAPHORE1 /* Current master domain ID. */
 #define APP_RDC_SEMA42_GATE (((uint8_t)APP_RDC_PERIPH) & 0x3F)
 
 /* OCRAM is used for demonstration here. */
-#define APP_RDC_MEM kRDC_Mem_MRC3_0
+#define APP_RDC_MEM           kRDC_Mem_MRC3_0
 #define APP_RDC_MEM_BASE_ADDR 0x900000
-#define APP_RDC_MEM_END_ADDR 0x920000
+#define APP_RDC_MEM_END_ADDR  0x920000
 
 /*
  * Master index:
@@ -36,6 +36,12 @@
  * SDMA 3
  */
 #define APP_MASTER_INDEX 6
+
+/*
+ * If cache is enabled, this example should maintain the cache to make sure
+ * CPU core accesses the memory, not cache only.
+ */
+#define APP_USING_CACHE 1
 
 typedef enum
 {
@@ -52,6 +58,17 @@ typedef enum
         for (;;)                     \
             ;                        \
     }
+
+/* For some platforms, the core's domain ID
+ * is not configured by RDC, for example, it
+ * is fixed value and not configurable.
+ * In this case, APP_ASSIGN_DOMAIN_ID_BY_RDC
+ * could be over-written to 0, and a function
+ * APP_AssignCoreDomain assigns the core's domain.
+ */
+#ifndef APP_ASSIGN_DOMAIN_ID_BY_RDC
+#define APP_ASSIGN_DOMAIN_ID_BY_RDC 1
+#endif
 
 /*******************************************************************************
  * Prototypes
@@ -87,7 +104,7 @@ static void APP_RDC_Mem(void);
 /* Current demo state. */
 static volatile rdc_demo_state_t s_demoState = kRDC_DEMO_None;
 /* HardFault happened or not. */
-static volatile bool s_hardfaultFlag = false;
+static volatile bool s_faultFlag = false;
 /* How many error happens during memory region demo. */
 static volatile uint32_t memDemoError = 0;
 
@@ -109,11 +126,15 @@ void APP_TouchMem(void)
     /* Touch the memory. */
     (*(volatile uint32_t *)APP_RDC_MEM_BASE_ADDR)++;
 }
-void HardFault_Handler(void)
+#if APP_USING_CACHE
+#include "fsl_cache.h"
+#endif
+
+static void Fault_Handler(void)
 {
     rdc_mem_status_t memStatus;
 
-    s_hardfaultFlag = true;
+    s_faultFlag = true;
 
     if (kRDC_DEMO_Periph == s_demoState)
     {
@@ -155,6 +176,16 @@ void HardFault_Handler(void)
     __DSB();
 }
 
+void HardFault_Handler(void)
+{
+    Fault_Handler();
+}
+
+void BusFault_Handler(void)
+{
+    Fault_Handler();
+}
+
 /*!
  * @brief Main function
  */
@@ -163,7 +194,7 @@ int main(void)
     /* Board specific RDC settings */
     BOARD_RdcInit();
 
-    BOARD_InitPins();
+    BOARD_InitBootPins();
     BOARD_BootClockRUN();
     BOARD_InitDebugConsole();
     BOARD_InitMemory();
@@ -185,10 +216,14 @@ int main(void)
     RDC_Init(APP_RDC);
     RDC_SEMA42_Init(APP_RDC_SEMA42);
 
+#if APP_ASSIGN_DOMAIN_ID_BY_RDC
     /* Assign current master domain. */
     RDC_GetDefaultMasterDomainAssignment(&assignment);
     assignment.domainId = APP_CUR_MASTER_DID;
     RDC_SetMasterDomainAssignment(APP_RDC, APP_CUR_MASTER, &assignment);
+#else
+    APP_AssignCoreDomain();
+#endif
 
     APP_RDC_Periph();
 
@@ -218,12 +253,12 @@ static void APP_RDC_Periph(void)
     /* Set peripheral to accessible by all domains. */
     RDC_SetPeriphAccessConfig(APP_RDC, &periphConfig);
 
-    s_hardfaultFlag = false;
+    s_faultFlag = false;
 
     APP_TouchPeriph();
 
     /* Peripheral is accessible, there should not be hardfault. */
-    DEMO_CHECK(false == s_hardfaultFlag);
+    DEMO_CHECK(false == s_faultFlag);
 
     /*
      * Item 2: Peripheral inaccessible.
@@ -232,11 +267,11 @@ static void APP_RDC_Periph(void)
     periphConfig.policy &= ~(RDC_ACCESS_POLICY(APP_CUR_MASTER_DID, kRDC_ReadWrite));
     RDC_SetPeriphAccessConfig(APP_RDC, &periphConfig);
 
-    s_hardfaultFlag = false;
+    s_faultFlag = false;
     APP_TouchPeriph();
 
     /* Peripheral is not accessible, there should be hardfault. */
-    DEMO_CHECK(true == s_hardfaultFlag);
+    DEMO_CHECK(true == s_faultFlag);
 }
 
 static void APP_RDC_PeriphWithSema42(void)
@@ -256,12 +291,12 @@ static void APP_RDC_PeriphWithSema42(void)
     RDC_SEMA42_Unlock(APP_RDC_SEMA42, APP_RDC_SEMA42_GATE);
     DEMO_CHECK(APP_CUR_MASTER_DID != RDC_SEMA42_GetLockDomainID(APP_RDC_SEMA42, APP_RDC_SEMA42_GATE));
 
-    s_hardfaultFlag = false;
+    s_faultFlag = false;
 
     APP_TouchPeriph();
 
     /* Peripheral is not accessible because SEMA42 gate not locked, there should be hardfault. */
-    DEMO_CHECK(true == s_hardfaultFlag);
+    DEMO_CHECK(true == s_faultFlag);
 
     /* Demo finished, make the peripheral to default policy. */
     RDC_GetDefaultPeriphAccessConfig(&periphConfig);
@@ -293,12 +328,31 @@ static void APP_RDC_Mem(void)
 
     /* Make memory not accessible. */
     memConfig.policy &= ~(RDC_ACCESS_POLICY(APP_CUR_MASTER_DID, kRDC_ReadWrite));
+
     RDC_SetMemAccessConfig(APP_RDC, &memConfig);
 
-    s_hardfaultFlag = false;
+#if APP_USING_CACHE
+    /*
+     * Invalidate the cache, so new read will read from memory directly,
+     * to make sure trigger read error.
+     */
+    DCACHE_InvalidateByRange(APP_RDC_MEM_BASE_ADDR, APP_RDC_MEM_END_ADDR - APP_RDC_MEM_BASE_ADDR);
+#endif
+
+    s_faultFlag = false;
+
     APP_TouchMem();
 
+#if APP_USING_CACHE
+    /*
+     * Flush the cache, so the modified data is written to memory,
+     * to make sure trigger write error.
+     */
+    DCACHE_CleanInvalidateByRange(APP_RDC_MEM_BASE_ADDR, APP_RDC_MEM_END_ADDR - APP_RDC_MEM_BASE_ADDR);
+    __DSB();
+#endif
+
     /* Memory is not accessible, there should be hardfault. */
-    DEMO_CHECK(true == s_hardfaultFlag);
+    DEMO_CHECK(true == s_faultFlag);
     DEMO_CHECK(0 == memDemoError);
 }

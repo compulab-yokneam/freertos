@@ -1,5 +1,5 @@
 /*
- * Copyright 2017, NXP
+ * Copyright 2017-2020, NXP
  * All rights reserved.
  *
  *
@@ -22,14 +22,93 @@
 
 /*! @name Driver version */
 /*@{*/
-/*! @brief GPC driver version 2.0.1. */
-#define FSL_GPC_DRIVER_VERSION (MAKE_VERSION(2, 0, 1))
+/*! @brief GPC driver version 2.2.0. */
+#define FSL_GPC_DRIVER_VERSION (MAKE_VERSION(2, 2, 0))
 /*@}*/
 
-/*! @brief Total number of the timeslot */
-#define GPC_PCG_TIME_SLOT_TOTAL_NUMBER (20U)
+/* Re-map the register and bitfields name for different ARM cortex M cores. */
+#if defined __CORTEX_M && (__CORTEX_M == 4U)
+#define GPC_PGC_CPU_0_1_MAPPING_MF_DOMAIN_MASK GPC_PGC_CPU_0_1_MAPPING_MF_M4_DOMAIN_MASK
 
-/*!< GPC LPM mode definition */
+#define GPC_IMR           IMR_M4
+#define GPC_IMR_COUNT     GPC_IMR_M4_COUNT
+#define GPC_IMR_IMR1_MASK GPC_IMR_M4_IMR1_M4_MASK
+#define GPC_IMR_IMR2_MASK GPC_IMR_M4_IMR2_M4_MASK
+#define GPC_IMR_IMR3_MASK GPC_IMR_M4_IMR3_M4_MASK
+#define GPC_IMR_IMR4_MASK GPC_IMR_M4_IMR4_M4_MASK
+
+#define GPC_ISR ISR_M4
+
+#define GPC_LPCR                       LPCR_M4
+#define GPC_LPCR_CPU_CLK_ON_LPM_MASK   GPC_LPCR_M4_CPU_CLK_ON_LPM_MASK
+#define GPC_LPCR_EN_PDN_MASK           GPC_LPCR_M4_EN_M4_PDN_MASK
+#define GPC_LPCR_EN_PUP_MASK           GPC_LPCR_M4_EN_M4_PUP_MASK
+#define GPC_LPCR_LPM0_MASK             GPC_LPCR_M4_LPM0_MASK
+#define GPC_LPCR_MASK_DSM_TRIGGER_MASK GPC_LPCR_M4_MASK_DSM_TRIGGER_MASK
+#define GPC_LPCR_MASK_WFI_MASK         GPC_LPCR_M4_MASK_M4_WFI_MASK
+
+#define GPC_MISC_PDN_REQ_MASK_MASK GPC_MISC_M4_PDN_REQ_MASK_MASK
+
+#define GPC_PGC_ACK_SEL                          PGC_ACK_SEL_M4
+#define GPC_PGC_ACK_SEL_DUMMY_PGC_PUP_ACK_MASK   GPC_PGC_ACK_SEL_M4_M4_DUMMY_PGC_PUP_ACK_MASK
+#define GPC_PGC_ACK_SEL_VIRTUAL_PGC_PUP_ACK_MASK GPC_PGC_ACK_SEL_M4_M4_VIRTUAL_PGC_PUP_ACK_MASK
+#define GPC_PGC_ACK_SEL_DUMMY_PGC_PDN_ACK_MASK   GPC_PGC_ACK_SEL_M4_M4_DUMMY_PGC_PDN_ACK_MASK
+#define GPC_PGC_ACK_SEL_VIRTUAL_PGC_PDN_ACK_MASK GPC_PGC_ACK_SEL_M4_M4_VIRTUAL_PGC_PDN_ACK_MASK
+#define GPC_PGC_ACK_SEL_NOC_PGC_PUP_ACK          GPC_PGC_ACK_SEL_M4_NOC_PGC_PUP_ACK_MASK
+#define GPC_PGC_ACK_SEL_NOC_PGC_PDN_ACK          GPC_PGC_ACK_SEL_M4_NOC_PGC_PDN_ACK_MASK
+
+#define GPC_SLPCR_EN_FASTWUP_WAIT_MODE_MASK GPC_SLPCR_EN_M4_FASTWUP_WAIT_MODE_MASK
+#define GPC_SLPCR_EN_FASTWUP_STOP_MODE_MASK GPC_SLPCR_EN_M4_FASTWUP_STOP_MODE_MASK
+
+#define GPC_SLT_CFG_PU_PDN_SLOT_CONTROL_MASK GPC_SLT_CFG_PU_M4_PDN_SLOT_CONTROL_MASK
+#define GPC_SLT_CFG_PU_PUP_SLOT_CONTROL_MASK GPC_SLT_CFG_PU_M4_PUP_SLOT_CONTROL_MASK
+#elif defined __CORTEX_M && (__CORTEX_M == 7U)
+#define GPC_IMR           IMR_M7
+#define GPC_IMR_COUNT     GPC_IMR_M7_COUNT
+#define GPC_IMR_IMR1_MASK GPC_IMR_M7_IMR1_M7_MASK
+#define GPC_IMR_IMR2_MASK GPC_IMR_M7_IMR2_M7_MASK
+#define GPC_IMR_IMR3_MASK GPC_IMR_M7_IMR3_M7_MASK
+#define GPC_IMR_IMR4_MASK GPC_IMR_M7_IMR4_M7_MASK
+#if (defined(GPC_IMR_M7_COUNT) && (GPC_IMR_M7_COUNT == 5U))
+#define GPC_IMR_IMR5_MASK GPC_IMR_M7_IMR5_M7_MASK
+#endif
+
+#define GPC_ISR ISR_M7
+
+#define GPC_LPCR                       LPCR_M7
+#define GPC_LPCR_CPU_CLK_ON_LPM_MASK   GPC_LPCR_M7_CPU_CLK_ON_LPM_MASK
+#define GPC_LPCR_EN_PDN_MASK           GPC_LPCR_M7_EN_M7_PDN_MASK
+#define GPC_LPCR_EN_PUP_MASK           GPC_LPCR_M7_EN_M7_PUP_MASK
+#define GPC_LPCR_LPM0_MASK             GPC_LPCR_M7_LPM0_MASK
+#define GPC_LPCR_MASK_DSM_TRIGGER_MASK GPC_LPCR_M7_MASK_DSM_TRIGGER_MASK
+#define GPC_LPCR_MASK_WFI_MASK         GPC_LPCR_M7_MASK_M7_WFI_MASK
+
+#define GPC_MISC_PDN_REQ_MASK_MASK GPC_MISC_M7_PDN_REQ_MASK_MASK
+
+#define GPC_PGC_ACK_SEL                          PGC_ACK_SEL_M7
+#define GPC_PGC_ACK_SEL_DUMMY_PGC_PUP_ACK_MASK   GPC_PGC_ACK_SEL_M7_M7_DUMMY_PGC_PUP_ACK_MASK
+#define GPC_PGC_ACK_SEL_VIRTUAL_PGC_PUP_ACK_MASK GPC_PGC_ACK_SEL_M7_M7_VIRTUAL_PGC_PUP_ACK_MASK
+#define GPC_PGC_ACK_SEL_DUMMY_PGC_PDN_ACK_MASK   GPC_PGC_ACK_SEL_M7_M7_DUMMY_PGC_PDN_ACK_MASK
+#define GPC_PGC_ACK_SEL_VIRTUAL_PGC_PDN_ACK_MASK GPC_PGC_ACK_SEL_M7_M7_VIRTUAL_PGC_PDN_ACK_MASK
+#define GPC_PGC_ACK_SEL_NOC_PGC_PUP_ACK          GPC_PGC_ACK_SEL_M7_NOC_PGC_PUP_ACK_MASK
+#define GPC_PGC_ACK_SEL_NOC_PGC_PDN_ACK          GPC_PGC_ACK_SEL_M7_NOC_PGC_PDN_ACK_MASK
+
+#define GPC_SLPCR_EN_FASTWUP_WAIT_MODE_MASK GPC_SLPCR_EN_M7_FASTWUP_WAIT_MODE_MASK
+#define GPC_SLPCR_EN_FASTWUP_STOP_MODE_MASK GPC_SLPCR_EN_M7_FASTWUP_STOP_MODE_MASK
+
+#if !(defined(GPC_SLT_CFG_PU1_COUNT) && GPC_SLT_CFG_PU1_COUNT)
+#define GPC_SLT_CFG_PU_PDN_SLOT_CONTROL_MASK GPC_SLT_CFG_PU_M7_PDN_SLOT_CONTROL_MASK
+#define GPC_SLT_CFG_PU_PUP_SLOT_CONTROL_MASK GPC_SLT_CFG_PU_M7_PUP_SLOT_CONTROL_MASK
+#else
+#define GPC_SLT_CFG_PU_PDN_SLOT_CONTROL_MASK GPC_SLT_CFG_PU1_M7_PDN_SLOT_CONTROL_MASK
+#define GPC_SLT_CFG_PU_PUP_SLOT_CONTROL_MASK GPC_SLT_CFG_PU1_M7_PUP_SLOT_CONTROL_MASK
+#endif /* GPC_SLT_CFG_PU1_COUNT */
+#endif
+
+/*! @brief Total number of the timeslot */
+#define GPC_PCG_TIME_SLOT_TOTAL_NUMBER GPC_SLT_CFG_PU_COUNT
+
+/*! @brief GPC LPM mode definition */
 enum _gpc_lpm_mode
 {
     kGPC_RunMode  = 0U, /*!< run mode */
@@ -37,17 +116,18 @@ enum _gpc_lpm_mode
     kGPC_StopMode = 2U, /*!< stop mode */
 };
 
-/*!< PGC ack signal selection  */
+/*! @brief PGC ack signal selection  */
 enum _gpc_pgc_ack_sel
 {
-    kGPC_DummyPGCPowerUpAck   = GPC_PGC_ACK_SEL_M4_M4_DUMMY_PGC_PUP_ACK_MASK,   /*!< dummy power up ack signal */
-    kGPC_VirtualPGCPowerUpAck = GPC_PGC_ACK_SEL_M4_M4_VIRTUAL_PGC_PUP_ACK_MASK, /*!< virtual pgc power up ack signal */
-    kGPC_DummyPGCPowerDownAck = GPC_PGC_ACK_SEL_M4_M4_DUMMY_PGC_PDN_ACK_MASK,   /*!< dummy power down ack signal */
-    kGPC_VirtualPGCPowerDownAck =
-        GPC_PGC_ACK_SEL_M4_M4_VIRTUAL_PGC_PDN_ACK_MASK, /*!< virtual pgc power down ack signal */
+    kGPC_DummyPGCPowerUpAck     = GPC_PGC_ACK_SEL_DUMMY_PGC_PUP_ACK_MASK,   /*!< dummy power up ack signal */
+    kGPC_VirtualPGCPowerUpAck   = GPC_PGC_ACK_SEL_VIRTUAL_PGC_PUP_ACK_MASK, /*!< virtual pgc power up ack signal */
+    kGPC_DummyPGCPowerDownAck   = GPC_PGC_ACK_SEL_DUMMY_PGC_PDN_ACK_MASK,   /*!< dummy power down ack signal */
+    kGPC_VirtualPGCPowerDownAck = GPC_PGC_ACK_SEL_VIRTUAL_PGC_PDN_ACK_MASK, /*!< virtual pgc power down ack signal */
+    kGPC_NocPGCPowerUpAck       = GPC_PGC_ACK_SEL_NOC_PGC_PUP_ACK,          /*!< NOC power up ack signal */
+    kGPC_NocPGCPowerDownAck     = GPC_PGC_ACK_SEL_NOC_PGC_PDN_ACK,          /*!< NOC power  */
 };
 
-/*!< Standby counter which GPC will wait between PMIC_STBY_REQ negation and assertion of PMIC_READY  */
+/*! @brief Standby counter which GPC will wait between PMIC_STBY_REQ negation and assertion of PMIC_READY  */
 enum _gpc_standby_count
 {
     kGPC_StandbyCounter4CkilClk   = 0U, /*!< 4 ckil clocks */
@@ -65,10 +145,10 @@ typedef struct _gpc_lpm_config
 {
     bool enFastWakeUp;          /*!< enable fast wake up from lpm mode */
     bool enCpuClk;              /*!< enable CPU clock when LPM enter */
-    bool enVirtualPGCPowerup;   /*!< enable m4 virtual PGC power up with LPM enter */
-    bool enVirtualPGCPowerdown; /*!< enable m4 virtual PGC power down with LPM enter */
-    bool enWfiMask;             /*!< enable M4 WFI Mask */
-    bool enDsmMask;             /*!< enable M4 DSM Mask */
+    bool enVirtualPGCPowerup;   /*!< enable virtual PGC power up with LPM enter */
+    bool enVirtualPGCPowerdown; /*!< enable virtual PGC power down with LPM enter */
+    bool enWfiMask;             /*!< enable WFI Mask */
+    bool enDsmMask;             /*!< enable DSM Mask */
 } gpc_lpm_config_t;
 
 /*!< configuration for enter DSM mode */
@@ -119,7 +199,7 @@ static inline void GPC_DisallowIRQs(GPC_Type *base)
  */
 static inline uint32_t GPC_GetLpmMode(GPC_Type *base)
 {
-    return base->LPCR_M4 & GPC_LPCR_M4_LPM0_MASK;
+    return base->GPC_LPCR & GPC_LPCR_LPM0_MASK;
 }
 
 /*!
@@ -148,7 +228,7 @@ void GPC_DisableIRQ(GPC_Type *base, uint32_t irqId);
 bool GPC_GetIRQStatusFlag(GPC_Type *base, uint32_t irqId);
 
 /*!
- * @brief Mask the DSM trigger for M4.
+ * @brief Mask the DSM trigger.
  *
  * @param base GPC peripheral base address.
  * @param enable true to enable mask, false to disable mask.
@@ -157,16 +237,16 @@ static inline void GPC_DsmTriggerMask(GPC_Type *base, bool enable)
 {
     if (enable)
     {
-        base->LPCR_M4 |= GPC_LPCR_M4_MASK_DSM_TRIGGER_MASK;
+        base->GPC_LPCR |= GPC_LPCR_MASK_DSM_TRIGGER_MASK;
     }
     else
     {
-        base->LPCR_M4 &= ~GPC_LPCR_M4_MASK_DSM_TRIGGER_MASK;
+        base->GPC_LPCR &= ~GPC_LPCR_MASK_DSM_TRIGGER_MASK;
     }
 }
 
 /*!
- * @brief Mask the WFI for M4.
+ * @brief Mask the WFI.
  *
  * @param base GPC peripheral base address.
  * @param enable true to enable mask, false to disable mask.
@@ -175,27 +255,27 @@ static inline void GPC_WFIMask(GPC_Type *base, bool enable)
 {
     if (enable)
     {
-        base->LPCR_M4 |= GPC_LPCR_M4_MASK_M4_WFI_MASK;
+        base->GPC_LPCR |= GPC_LPCR_MASK_WFI_MASK;
     }
     else
     {
-        base->LPCR_M4 &= ~GPC_LPCR_M4_MASK_M4_WFI_MASK;
+        base->GPC_LPCR &= ~GPC_LPCR_MASK_WFI_MASK;
     }
 }
 
 /*!
- * @brief Select the PGC ACK signal for M4.
+ * @brief Select the PGC ACK signal.
  *
  * @param base GPC peripheral base address.
  * @param mask reference _gpc_pgc_ack_sel.
  */
 static inline void GPC_SelectPGCAckSignal(GPC_Type *base, uint32_t mask)
 {
-    base->PGC_ACK_SEL_M4 |= mask;
+    base->GPC_PGC_ACK_SEL |= mask;
 }
 
 /*!
- * @brief M4 power down request to virtual PGC mask or not.
+ * @brief Power down request to virtual PGC mask or not.
  *
  * @param base GPC peripheral base address.
  * @param enable true to mask, false to not mask.
@@ -204,23 +284,27 @@ static inline void GPC_PowerDownRequestMask(GPC_Type *base, bool enable)
 {
     if (enable)
     {
-        base->MISC &= ~GPC_MISC_M4_PDN_REQ_MASK_MASK;
+        base->MISC &= ~GPC_MISC_PDN_REQ_MASK_MASK;
     }
     else
     {
-        base->MISC |= GPC_MISC_M4_PDN_REQ_MASK_MASK;
+        base->MISC |= GPC_MISC_PDN_REQ_MASK_MASK;
     }
 }
 
 /*!
- * @brief PGC CPU Mapping to M4 domain.
+ * @brief PGC CPU Mapping.
  *
  * @param base GPC peripheral base address.
  * @param mask mask value reference PGC CPU mapping definition.
  */
-static inline void GPC_PGCMappingToM4Domain(GPC_Type *base, uint32_t mask)
+static inline void GPC_PGCMapping(GPC_Type *base, uint32_t mask)
 {
+#if !(defined(GPC_PGC_CPU_M7_MAPPING_MIX0_SUPERMIXM7_DOMAIN_MASK) && GPC_PGC_CPU_M7_MAPPING_MIX0_SUPERMIXM7_DOMAIN_MASK)
     base->PGC_CPU_0_1_MAPPING |= mask & 0xFFFD0000U;
+#else
+    base->PGC_CPU_M7_MAPPING |= mask & 0x3FFFFFUL;
+#endif /* GPC_PGC_CPU_M7_MAPPING_MIX0_SUPERMIXM7_DOMAIN_MASK */
 }
 
 /*!
@@ -234,8 +318,28 @@ static inline void GPC_TimeSlotConfigureForPUS(GPC_Type *base, uint8_t slotIndex
 {
     assert(slotIndex < GPC_PCG_TIME_SLOT_TOTAL_NUMBER);
 
+#if !(defined(GPC_SLT_CFG_PU1_COUNT) && GPC_SLT_CFG_PU1_COUNT)
     base->SLT_CFG_PU[slotIndex] |= value;
+#else
+    base->SLTn_CFG_PU[slotIndex].SLT_CFG_PU = value;
+#endif /* GPC_SLT_CFG_PU1_COUNT */
 }
+
+#if defined(GPC_SLT_CFG_PU1_COUNT) && GPC_SLT_CFG_PU1_COUNT
+/*!
+ * @brief Time slot configure of extended PUs
+ *
+ * @param base GPC peripheral base address.
+ * @param slotIndex Time slot index.
+ * @param value The value of extended PUs, please refer to the reference manual for details.
+ */
+static inline void GPC_TimeSlotConfigureForExtendedPUS(GPC_Type *base, uint8_t slotIndex, uint32_t value)
+{
+    assert(slotIndex < GPC_PCG_TIME_SLOT_TOTAL_NUMBER);
+
+    base->SLTn_CFG_PU[slotIndex].SLT_CFG_PU1 = value;
+}
+#endif /* GPC_SLT_CFG_PU1_COUNT */
 
 /*!
  * @brief Enter WAIT mode.

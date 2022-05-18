@@ -19,8 +19,8 @@ unlocked and second instance of write_task_2 is executed.
 
 Toolchain supported
 ===================
-- IAR embedded Workbench  8.32.3
-- GCC ARM Embedded  8.2.1
+- IAR embedded Workbench  9.10.2
+- GCC ARM Embedded  10.2.1
 
 Hardware requirements
 =====================
@@ -59,6 +59,3 @@ Example output:
 "1234 | 5678"
 "ABCD | EFGH"
 "1234 | 5678"
-Customization options
-=====================
-
